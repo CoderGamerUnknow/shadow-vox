@@ -5,6 +5,7 @@
  * XTTS-v2 API and returns the path to the synthesized audio.
  */
 
+import * as Sentry from "@sentry/node";
 import axios from "axios";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL || "http://127.0.0.1:8000";
@@ -26,24 +27,41 @@ export async function generateClonedVoice(
   userId: string,
   text: string
 ): Promise<string> {
-  console.log(`🔊 Requesting voice clone for user ${userId} ...`);
-
-  const response = await axios.post<CloneResult>(
-    `${PYTHON_API_URL}/clone`,
+  return Sentry.startSpan(
     {
-      user_id: userId,
-      text,
-      language: "en",
+      name: "voice-clone-http",
+      op: "http.post",
+      attributes: {
+        "clone.user_id": userId,
+        "clone.text_length": text.length,
+        "clone.api_url": PYTHON_API_URL,
+      },
     },
-    { timeout: 60_000 }
+    async () => {
+      console.log(`🔊 Requesting voice clone for user ${userId} ...`);
+
+      const response = await axios.post<CloneResult>(
+        `${PYTHON_API_URL}/clone`,
+        {
+          user_id: userId,
+          text,
+          language: "en",
+        },
+        { timeout: 60_000 }
+      );
+
+      if (response.data.status === "success") {
+        console.log(`✅ Voice cloned successfully → ${response.data.file}`);
+        Sentry.getActiveSpan()?.setAttribute("clone.output_file", response.data.file);
+        if (response.data.duration_seconds != null) {
+          Sentry.getActiveSpan()?.setAttribute("clone.duration_seconds", response.data.duration_seconds);
+        }
+        return response.data.file;
+      }
+
+      throw new Error(`Voice cloning API returned: ${response.data.status}`);
+    },
   );
-
-  if (response.data.status === "success") {
-    console.log(`✅ Voice cloned successfully → ${response.data.file}`);
-    return response.data.file;
-  }
-
-  throw new Error(`Voice cloning API returned: ${response.data.status}`);
 }
 
 /**

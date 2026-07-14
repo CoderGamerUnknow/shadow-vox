@@ -7,6 +7,7 @@
  * recording with configurable end behavior.
  */
 
+import * as Sentry from "@sentry/node";
 import { createWriteStream, unlinkSync, existsSync, mkdirSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { join } from "node:path";
@@ -63,21 +64,35 @@ async function convertPcmToWav(userId: string): Promise<string> {
 
   console.log(`🔄 Converting PCM → WAV for user ${userId}`);
 
-  try {
-    await execAsync(
-      `ffmpeg -y -f s16le -ar 48000 -ac 2 -i "${pcmPath}" "${wavPath}"`,
-      { timeout: 15_000 },
-    );
-    // Clean up the raw PCM file
-    unlinkSync(pcmPath);
-    console.log(`✅ WAV saved: ${wavPath}`);
-    return wavPath;
-  } catch (err) {
-    console.error("❌ FFmpeg conversion failed:", err);
-    throw new Error(
-      "FFmpeg conversion failed. Ensure ffmpeg is installed on the system.",
-    );
-  }
+  return Sentry.startSpan(
+    {
+      name: "ffmpeg-convert",
+      op: "audio.transcode",
+      attributes: {
+        "audio.user_id": userId,
+        "audio.input_format": "pcm",
+        "audio.output_format": "wav",
+        "audio.input_path": pcmPath,
+      },
+    },
+    async () => {
+      try {
+        await execAsync(
+          `ffmpeg -y -f s16le -ar 48000 -ac 2 -i "${pcmPath}" "${wavPath}"`,
+          { timeout: 15_000 },
+        );
+        // Clean up the raw PCM file
+        unlinkSync(pcmPath);
+        console.log(`✅ WAV saved: ${wavPath}`);
+        return wavPath;
+      } catch (err) {
+        console.error("❌ FFmpeg conversion failed:", err);
+        throw new Error(
+          "FFmpeg conversion failed. Ensure ffmpeg is installed on the system.",
+        );
+      }
+    },
+  );
 }
 
 // ── Record ────────────────────────────────────────────────────────────────
@@ -168,17 +183,29 @@ async function convertPcmToWavCustom(
 
   console.log(`🔄 Converting PCM → WAV: ${pcmPath}`);
 
-  try {
-    await execAsync(
-      `ffmpeg -y -f s16le -ar 48000 -ac 2 -i "${pcmPath}" "${wavPath}"`,
-      { timeout: 15_000 },
-    );
-    // Clean up the raw PCM file
-    unlinkSync(pcmPath);
-    console.log(`✅ WAV saved: ${wavPath}`);
-    return wavPath;
-  } catch (err) {
-    console.error("❌ FFmpeg conversion failed:", err);
-    throw new Error("FFmpeg conversion failed. Ensure ffmpeg is installed.");
-  }
+  return Sentry.startSpan(
+    {
+      name: "ffmpeg-convert-custom",
+      op: "audio.transcode",
+      attributes: {
+        "audio.input_path": pcmPath,
+        "audio.output_path": wavPath,
+      },
+    },
+    async () => {
+      try {
+        await execAsync(
+          `ffmpeg -y -f s16le -ar 48000 -ac 2 -i "${pcmPath}" "${wavPath}"`,
+          { timeout: 15_000 },
+        );
+        // Clean up the raw PCM file
+        unlinkSync(pcmPath);
+        console.log(`✅ WAV saved: ${wavPath}`);
+        return wavPath;
+      } catch (err) {
+        console.error("❌ FFmpeg conversion failed:", err);
+        throw new Error("FFmpeg conversion failed. Ensure ffmpeg is installed.");
+      }
+    },
+  );
 }

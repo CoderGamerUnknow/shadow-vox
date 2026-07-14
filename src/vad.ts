@@ -7,6 +7,7 @@
  * and play it back — creating a real-time voice mirror.
  */
 
+import * as Sentry from "@sentry/node";
 import {
   VoiceConnection,
   EndBehaviorType,
@@ -177,16 +178,29 @@ export class VoiceActivityDetector {
     this.callbacks.onRecordingStart?.(userId);
 
     // Silently record — the Promise resolves when the stream ends
-    recordUserVoice(this.connection, userId, {
-      endBehavior: EndBehaviorType.AfterSilence,
-      silenceDuration: this.config.silenceDurationMs,
-    })
-      .then((wavPath) => this.onRecordingFinished(userId, wavPath))
-      .catch((err) => {
-        console.warn(`⚠️  VAD recording error for ${userId}:`, err.message);
-        this.activeRecordings.delete(userId);
-        this.callbacks.onError?.(userId, err.message);
-      });
+    Sentry.startSpan(
+      {
+        name: "vad-record",
+        op: "audio.capture",
+        attributes: {
+          "vad.user_id": userId,
+          "vad.silence_window_ms": this.config.silenceDurationMs,
+          "vad.listen_to_all": this.config.listenToAll,
+        },
+      },
+      () => {
+        recordUserVoice(this.connection, userId, {
+          endBehavior: EndBehaviorType.AfterSilence,
+          silenceDuration: this.config.silenceDurationMs,
+        })
+          .then((wavPath) => this.onRecordingFinished(userId, wavPath))
+          .catch((err) => {
+            console.warn(`⚠️  VAD recording error for ${userId}:`, err.message);
+            this.activeRecordings.delete(userId);
+            this.callbacks.onError?.(userId, err.message);
+          });
+      },
+    );
   }
 
   private onSpeakingEnd(userId: string): void {
@@ -245,26 +259,42 @@ export class VoiceActivityDetector {
   }
 
   private async triggerClone(userId: string): Promise<void> {
-    // Cooldown check
-    const last = this.lastTriggered.get(userId) ?? 0;
-    if (Date.now() - last < this.config.cooldownMs) {
-      console.log(`⏳ VAD cooldown active for ${userId}, skipping clone`);
-      return;
-    }
-    this.lastTriggered.set(userId, Date.now());
+    return Sentry.startSpan(
+      {
+        name: "vad-clone-trigger",
+        op: "voice.clone",
+        attributes: {
+          "vad.user_id": userId,
+          "vad.cooldown_ms": this.config.cooldownMs,
+          "vad.clone_text_length": this.config.cloneText.length,
+        },
+      },
+      async () => {
+        // Cooldown check
+        const last = this.lastTriggered.get(userId) ?? 0;
+        if (Date.now() - last < this.config.cooldownMs) {
+          console.log(`⏳ VAD cooldown active for ${userId}, skipping clone`);
+          return;
+        }
+        this.lastTriggered.set(userId, Date.now());
 
-    this.callbacks.onCloneStart?.(userId);
-    console.log(`🗣️  VAD auto-cloning voice for ${userId} ...`);
+        this.callbacks.onCloneStart?.(userId);
+        console.log(`🗣️  VAD auto-cloning voice for ${userId} ...`);
 
-    try {
-      const audioPath = await generateClonedVoice(userId, this.config.cloneText);
-      this.callbacks.onCloneComplete?.(userId, audioPath);
+        try {
+          const audioPath = await generateClonedVoice(
+            userId,
+            this.config.cloneText,
+          );
+          this.callbacks.onCloneComplete?.(userId, audioPath);
 
-      playClonedAudio(this.connection, audioPath);
-      console.log(`🔊 VAD played cloned voice for ${userId}`);
-    } catch (err) {
-      console.error(`❌ VAD clone failed for ${userId}:`, err);
-      this.callbacks.onError?.(userId, String(err));
-    }
+          playClonedAudio(this.connection, audioPath);
+          console.log(`🔊 VAD played cloned voice for ${userId}`);
+        } catch (err) {
+          console.error(`❌ VAD clone failed for ${userId}:`, err);
+          this.callbacks.onError?.(userId, String(err));
+        }
+      },
+    );
   }
 }
