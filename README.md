@@ -529,5 +529,5 @@ Discord Voice Channel
 <p align="center">
   <sub>Generated automatically by <strong>/generate-readme</strong> • ShadowVox v1.0.0</sub>
   <br />
-  <sub>🕐 <strong>Last updated:</strong> 2026-07-14 12:16:24 UTC</sub>
+  <sub>🕐 <strong>Last updated:</strong> 2026-07-14 12:18:06 UTC</sub>
 </p>
