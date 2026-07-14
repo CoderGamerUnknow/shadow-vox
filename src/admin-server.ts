@@ -71,9 +71,14 @@ function addLog(level: LogEntry["level"], message: string) {
   if (activityLog.length > MAX_LOG) activityLog.shift();
 }
 
-// ── Start Server ──────────────────────────────────────────────────────────
+// ── Create App (for testing without starting the server) ─────────────
 
-export function startAdminServer(port: number, state: BotState): void {
+/**
+ * Creates and configures the Express application with all middleware and routes.
+ * Does NOT start listening — use supertest against the returned app in tests.
+ * Called internally by startAdminServer to separate app creation from listening.
+ */
+export function createAdminApp(state: BotState): express.Application {
   const app = express();
 
   // ── Security Middleware ──────────────────────────────────────────────
@@ -126,8 +131,12 @@ export function startAdminServer(port: number, state: BotState): void {
   app.use("/api/*", (req, res, next) => {
     if (apiKey) {
       const key = req.headers["x-api-key"] as string | undefined;
-      // Timing-safe comparison
-      if (!key || !timingSafeEqual(Buffer.from(key), Buffer.from(apiKey))) {
+      // Timing-safe comparison (with length check to prevent RangeError)
+      if (!key || key.length !== apiKey.length) {
+        res.status(401).json({ error: "Unauthorized. Provide x-api-key header." });
+        return;
+      }
+      if (!timingSafeEqual(Buffer.from(key), Buffer.from(apiKey))) {
         res.status(401).json({ error: "Unauthorized. Provide x-api-key header." });
         return;
       }
@@ -511,7 +520,13 @@ export function startAdminServer(port: number, state: BotState): void {
     res.sendFile(join(DASHBOARD_DIR, "index.html"));
   });
 
-  // ── Start with fallback ──────────────────────────────────────────────
+  return app;
+}
+
+// ── Start Server ──────────────────────────────────────────────────────────
+
+export function startAdminServer(port: number, state: BotState): void {
+  const app = createAdminApp(state);
 
   const server = app.listen(port, () => {
     console.log(`🌐 Control Center: http://localhost:${port}`);
