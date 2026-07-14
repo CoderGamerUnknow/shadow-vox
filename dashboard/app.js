@@ -3,8 +3,28 @@ let state = { bot: null, connection: null, vad: null, profiles: null, presets: n
 let voiceMode = 'profile'; // 'profile' or 'preset'
 let selectedPresetId = null;
 let apiKey = '';
-const urlParams = new URLSearchParams(window.location.search);
-apiKey = urlParams.get('key') || '';
+
+// Security: prompt for API key instead of reading from URL (avoids leakage in
+// browser history, referrer headers, and server access logs).
+function initApiKey() {
+  const stored = sessionStorage.getItem('shadowvox_apikey');
+  if (stored) {
+    apiKey = stored;
+    return;
+  }
+  // Check if the server actually requires a key by making an unauthenticated request
+  fetch('/api/status', { headers: { 'Content-Type': 'application/json' } })
+    .then(res => {
+      if (res.status === 401) {
+        const key = prompt('Enter Admin API Key:');
+        if (key) {
+          apiKey = key;
+          sessionStorage.setItem('shadowvox_apikey', key);
+        }
+      }
+    })
+    .catch(() => {});
+}
 
 function apiHeaders() {
   const h = { 'Content-Type': 'application/json' };
@@ -212,8 +232,8 @@ function renderPresetGrid() {
     const activeClass = isActive ? 'active' : '';
     
     let html = '<div class="preset-chip ' + availClass + ' ' + activeClass + '" ' +
-      (p.available ? 'onclick="selectPreset(\'' + p.id + '\')"' : 'title="Place presets/' + p.id + '.wav to activate"') + '>' +
-      '<span class="chip-emoji">' + p.emoji + '</span>' +
+      (p.available ? 'onclick="selectPreset(\'' + escapeHtml(p.id) + '\')"' : 'title="Place presets/' + escapeHtml(p.id) + '.wav to activate"') + '>' +
+      '<span class="chip-emoji">' + escapeHtml(p.emoji) + '</span>' +
       '<span class="chip-name">' + escapeHtml(p.name) + '</span>';
     
     // Add play sample button (only for available presets)
@@ -551,6 +571,7 @@ function refreshProfiles() {
   fetchStatus();
 }
 
-// ── Polling ──
+// ── Init ──
+initApiKey();
 fetchStatus();
 setInterval(fetchStatus, 3000);

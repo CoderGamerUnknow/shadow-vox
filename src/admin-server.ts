@@ -9,11 +9,14 @@
 import express from "express";
 import type { Request, Response } from "express";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import * as Sentry from "@sentry/node";
 import { join, resolve, dirname } from "node:path";
 import type { Client } from "discord.js";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { timingSafeEqual } from "node:crypto";
 import type { VoiceConnection } from "@discordjs/voice";
 import { profileStore, type VoiceProfile } from "./profiles.js";
 import { VoiceActivityDetector, type VadConfig } from "./vad.js";
@@ -73,16 +76,58 @@ function addLog(level: LogEntry["level"], message: string) {
 export function startAdminServer(port: number, state: BotState): void {
   const app = express();
 
-  app.use(cors());
-  app.use(express.json({ limit: "1mb" }));
+  // ── Security Middleware ──────────────────────────────────────────────
 
-  // ── API Middleware: Admin auth (optional) ─────────────────────────────
+  // Security headers (Helmet with relaxed CSP for local dashboard)
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+          fontSrc: ["'self'", "https://fonts.gstatic.com"],
+          imgSrc: ["'self'", "data:", "https:"],
+          connectSrc: ["'self'", "http://127.0.0.1:*"],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
+
+  // CORS — restricted to same-origin only by default
+  app.use(cors({ origin: true, credentials: true }));
+
+  // Body parser with strict size limits
+  app.use(express.json({ limit: "100kb" }));
+
+  // Rate limiting for all API routes
+  const apiLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 60,             // max 60 requests per minute
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests. Please slow down." },
+  });
+  app.use("/api/*", apiLimiter);
+
+  // Stricter rate limit for sensitive endpoints
+  const strictLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests. Please slow down." },
+  });
+
+  // ── API Middleware: Admin auth (optional, timing-safe) ────────────────
   const apiKey = process.env.ADMIN_API_KEY;
 
   app.use("/api/*", (req, res, next) => {
     if (apiKey) {
-      const key = req.headers["x-api-key"] as string;
-      if (key !== apiKey) {
+      const key = req.headers["x-api-key"] as string | undefined;
+      // Timing-safe comparison
+      if (!key || !timingSafeEqual(Buffer.from(key), Buffer.from(apiKey))) {
         res.status(401).json({ error: "Unauthorized. Provide x-api-key header." });
         return;
       }
@@ -164,18 +209,29 @@ export function startAdminServer(port: number, state: BotState): void {
   });
 
   /** POST /api/speak — clone and play text through a user's voice or preset */
-  app.post("/api/speak", async (req: Request, res: Response) => {
-    const { userId, text, language, presetId } = req.body as {
+  app.post("/api/speak", strictLimiter, async (req: Request, res: Response) => {
+    const { userId, language, presetId } = req.body as {
       userId?: string;
       text?: string;
       language?: string;
       presetId?: string;
     };
+    const body = req.body as Record<string, unknown>;
+    let text = typeof body.text === "string" ? body.text : "";
 
     if (!text) {
       res.status(400).json({ error: "text is required" });
       return;
     }
+
+    // Input validation: limit text length to prevent abuse
+    if (text.length > 500) {
+      res.status(400).json({ error: "Text too long (max 500 characters)" });
+      return;
+    }
+
+    // Sanitize: strip control characters
+    text = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
 
     if (!state.activeConnection) {
       res.status(400).json({ error: "Bot is not connected to a voice channel" });
@@ -242,7 +298,7 @@ export function startAdminServer(port: number, state: BotState): void {
   });
 
   /** POST /api/train — record a user (requires userId in body) */
-  app.post("/api/record", async (req: Request, res: Response) => {
+  app.post("/api/record", strictLimiter, async (req: Request, res: Response) => {
     const { userId, username } = req.body as {
       userId?: string;
       username?: string;

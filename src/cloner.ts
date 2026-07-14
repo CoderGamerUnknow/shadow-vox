@@ -7,6 +7,7 @@
 
 import * as Sentry from "@sentry/node";
 import axios from "axios";
+import { resolve } from "node:path";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL || "http://127.0.0.1:8000";
 
@@ -53,9 +54,15 @@ export async function generateClonedVoice(
         language,
       };
 
-      // If a custom speaker path is provided, include it in the request
+      // If a custom speaker path is provided, sanitize and include it
       if (speakerWavPath) {
-        body.speaker_wav_path = speakerWavPath;
+        // Resolve to absolute path and validate it's within the project directory
+        const resolved = resolve(speakerWavPath);
+        const cwd = process.cwd();
+        if (!resolved.startsWith(cwd)) {
+          throw new Error("Speaker WAV path is outside the allowed project directory");
+        }
+        body.speaker_wav_path = resolved;
       }
 
       const response = await axios.post<CloneResult>(

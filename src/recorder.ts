@@ -16,10 +16,7 @@ import {
   EndBehaviorType,
 } from "@discordjs/voice";
 import prism from "prism-media";
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
-
-const execAsync = promisify(exec);
+import { spawn } from "node:child_process";
 
 const RECORDINGS_DIR = join(process.cwd(), "recordings");
 
@@ -77,10 +74,21 @@ async function convertPcmToWav(userId: string): Promise<string> {
     },
     async () => {
       try {
-        await execAsync(
-          `ffmpeg -y -f s16le -ar 48000 -ac 2 -i "${pcmPath}" "${wavPath}"`,
-          { timeout: 15_000 },
-        );
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn("ffmpeg", [
+            "-y",
+            "-f", "s16le",
+            "-ar", "48000",
+            "-ac", "2",
+            "-i", pcmPath,
+            wavPath,
+          ], { timeout: 15_000 });
+          proc.on("exit", (code) => {
+            if (code === 0) resolve();
+            else reject(new Error(`FFmpeg exited with code ${code}`));
+          });
+          proc.on("error", reject);
+        });
         // Clean up the raw PCM file
         unlinkSync(pcmPath);
         console.log(`✅ WAV saved: ${wavPath}`);
@@ -194,10 +202,21 @@ async function convertPcmToWavCustom(
     },
     async () => {
       try {
-        await execAsync(
-          `ffmpeg -y -f s16le -ar 48000 -ac 2 -i "${pcmPath}" "${wavPath}"`,
-          { timeout: 15_000 },
-        );
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn("ffmpeg", [
+            "-y",
+            "-f", "s16le",
+            "-ar", "48000",
+            "-ac", "2",
+            "-i", pcmPath,
+            wavPath,
+          ], { timeout: 15_000 });
+          proc.on("exit", (code) => {
+            if (code === 0) resolve();
+            else reject(new Error(`FFmpeg exited with code ${code}`));
+          });
+          proc.on("error", reject);
+        });
         // Clean up the raw PCM file
         unlinkSync(pcmPath);
         console.log(`✅ WAV saved: ${wavPath}`);

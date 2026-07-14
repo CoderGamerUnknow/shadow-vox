@@ -275,7 +275,8 @@ client.on(Events.MessageCreate, async (message) => {
     console.error(`❌ Command '${command}' error:`, err);
     Sentry.addBreadcrumb({ category: "command", message: `Command '${command}' failed`, level: "error" });
     Sentry.captureException(err);
-    await message.reply(`❌ An error occurred: \`${err}\``).catch(() => {});
+    const safeMsg = String(err).slice(0, 200).replace(/[\r\n]/g, " ");
+    await message.reply(`❌ An error occurred: \`${safeMsg}\``).catch(() => {});
   }
 });
 
@@ -424,7 +425,8 @@ async function handleRecord(message: any) {
     );
   } catch (err) {
     Sentry.captureException(err);
-    await message.reply(`❌ Recording failed: \`${err}\``);
+    const safeErr = String(err).slice(0, 200).replace(/[\r\n]/g, " ");
+    await message.reply(`❌ Recording failed: \`${safeErr}\``);
   }
 }
 
@@ -584,6 +586,9 @@ async function handleSay(message: any, text: string) {
     await message.reply("❌ Usage: `!say <text to speak>`");
     return;
   }
+
+  // Sanitize input: strip control characters and limit length
+  text = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "").slice(0, 500);
 
   const userId = message.author.id;
 

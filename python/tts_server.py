@@ -7,6 +7,7 @@ returns synthesized speech in the cloned voice.
 """
 
 import os
+import re
 import sys
 import logging
 from pathlib import Path
@@ -93,16 +94,31 @@ def clone_voice(request: CloneRequest):
     Clone a user's voice using their recorded reference audio and
     synthesise the provided text in that voice.
     """
-    speaker_wav = RECORDINGS_DIR / f"{request.user_id}.wav"
+    # Security: sanitize user_id to prevent path traversal
+    safe_id = re.sub(r'[^a-zA-Z0-9_@.\-]', '', request.user_id)[:128]
+    if not safe_id:
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+
+    # Also check for a custom speaker_wav_path from the body
+    speaker_wav_path_override = getattr(request, 'speaker_wav_path', None)
+    if speaker_wav_path_override:
+        speaker_wav = Path(str(speaker_wav_path_override)).resolve()
+        # Ensure it's within the project directory
+        if not str(speaker_wav).startswith(str(BASE_DIR.resolve())):
+            raise HTTPException(status_code=400, detail="speaker_wav_path is outside allowed directory")
+        if not speaker_wav.exists():
+            raise HTTPException(status_code=404, detail=f"Speaker file not found: {speaker_wav}")
+    else:
+        speaker_wav = RECORDINGS_DIR / f"{safe_id}.wav"
 
     if not speaker_wav.exists():
         raise HTTPException(
             status_code=404,
-            detail=f"Reference recording not found for user '{request.user_id}'. "
+            detail=f"Reference recording not found for user '{safe_id}'. "
                    f"Please record their voice first.",
         )
 
-    output_path = OUTPUT_DIR / f"{request.user_id}_cloned.wav"
+    output_path = OUTPUT_DIR / f"{safe_id}_cloned.wav"
 
     try:
         model = get_model()

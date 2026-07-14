@@ -197,17 +197,19 @@ export class VoiceActivityDetector {
           "vad.listen_to_all": this.config.listenToAll,
         },
       },
-      () => {
-        recordUserVoice(this.connection, userId, {
-          endBehavior: EndBehaviorType.AfterSilence,
-          silenceDuration: this.config.silenceDurationMs,
-        })
-          .then((wavPath) => this.onRecordingFinished(userId, wavPath))
-          .catch((err) => {
-            console.warn(`⚠️  VAD recording error for ${userId}:`, err.message);
-            this.activeRecordings.delete(userId);
-            this.callbacks.onError?.(userId, err.message);
+      async () => {
+        try {
+          const wavPath = await recordUserVoice(this.connection, userId, {
+            endBehavior: EndBehaviorType.AfterSilence,
+            silenceDuration: this.config.silenceDurationMs,
           });
+          await this.onRecordingFinished(userId, wavPath);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`⚠️  VAD recording error for ${userId}:`, msg);
+          this.activeRecordings.delete(userId);
+          this.callbacks.onError?.(userId, msg);
+        }
       },
     );
   }
@@ -239,15 +241,8 @@ export class VoiceActivityDetector {
 
     // Auto-profile: save recording for new users
     if (!hasProfile && this.config.autoProfile) {
-      // Try to get the username from the connection
-      let username = userId;
-      try {
-        const member = this.connection.joinConfig;
-        // We can cache usernames, but we just store the userId for now
-        // The username will be filled if available
-      } catch {
-        // noop
-      }
+      // Username will default to userId since we can't cache Discord usernames
+      // in this context without additional API calls
 
       const profile: VoiceProfile = {
         userId,
