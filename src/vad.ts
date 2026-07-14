@@ -199,11 +199,12 @@ export class VoiceActivityDetector {
     userId: string,
     wavPath: string,
   ): Promise<void> {
+    // Read the start time BEFORE deleting the entry
+    const startTime = this.activeRecordings.get(userId) ?? 0;
     this.activeRecordings.delete(userId);
 
-    // Determine duration
-    const startTime = this.activeRecordings.get(userId);
-    const durationMs = startTime ? Date.now() - startTime : 0;
+    // Determine duration (clamped to avoid negative values)
+    const durationMs = Math.max(0, Date.now() - startTime);
 
     console.log(
       `🎤 VAD captured ${userId} (${(durationMs / 1000).toFixed(1)}s) → ${wavPath}`,

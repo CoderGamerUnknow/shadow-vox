@@ -15,7 +15,10 @@ import {
   EndBehaviorType,
 } from "@discordjs/voice";
 import prism from "prism-media";
-import { execSync } from "node:child_process";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+
+const execAsync = promisify(exec);
 
 const RECORDINGS_DIR = join(process.cwd(), "recordings");
 
@@ -61,9 +64,9 @@ async function convertPcmToWav(userId: string): Promise<string> {
   console.log(`🔄 Converting PCM → WAV for user ${userId}`);
 
   try {
-    execSync(
+    await execAsync(
       `ffmpeg -y -f s16le -ar 48000 -ac 2 -i "${pcmPath}" "${wavPath}"`,
-      { stdio: "pipe", timeout: 15_000 },
+      { timeout: 15_000 },
     );
     // Clean up the raw PCM file
     unlinkSync(pcmPath);
@@ -166,9 +169,9 @@ async function convertPcmToWavCustom(
   console.log(`🔄 Converting PCM → WAV: ${pcmPath}`);
 
   try {
-    execSync(
+    await execAsync(
       `ffmpeg -y -f s16le -ar 48000 -ac 2 -i "${pcmPath}" "${wavPath}"`,
-      { stdio: "pipe", timeout: 15_000 },
+      { timeout: 15_000 },
     );
     // Clean up the raw PCM file
     unlinkSync(pcmPath);
