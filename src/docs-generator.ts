@@ -328,6 +328,7 @@ ${commands
       profiles: "List all saved voice profiles",
       deleteprofile: "Delete a user's voice profile",
       setclone: "Set the default text for VAD auto-cloning",
+      voice: "List and select from 42 voice presets (Morgan Freeman, Yoda, etc.)",
       vad: "Manage Voice Activity Detection settings",
       ping: "Check if the bot is alive",
       health: "Check if the Python TTS server is running",
@@ -362,7 +363,9 @@ Open \`http://localhost:3000\` (configurable via \`ADMIN_PORT\`) to access:
 | **Connection status** | Live indicator showing guild, channel, and bot state |
 | **Voice profiles** | List all profiles with delete capability |
 | **VAD controls** | Toggle listening, auto-clone, listen-to-all, and silence threshold |
-| **Speak form** | Select a profile, type text, and trigger voice cloning |
+| **Speak form** | Select a profile or preset, type text, and trigger voice cloning |
+| **Preset browser** | Browse and select from 42 voice presets with category filtering |
+| **Preset play button** | Click ▶ on any preset chip to hear its reference audio sample |
 | **Activity log** | Scrolling timestamped event feed |
 | **Animated waveform** | Visual indicator of bot connection state |
 
@@ -382,6 +385,7 @@ ${adminRoutes.map((route) => {
     "POST /api/leave": "Leave voice channel",
     "DELETE /api/profiles/:userId": "Delete a voice profile",
     "POST /api/vad": "Update VAD configuration",
+    "POST /api/play-preset/:presetId": "Play a preset's reference audio sample",
     "GET /api/health": "Check Python TTS server health",
   };
   return `| \`${route}\` | ${descs[route] || "—"} |`;
@@ -432,6 +436,75 @@ Voice profiles are stored in \`profiles.json\` at the project root with JSON per
 
 ---
 
+## 🎭 Voice Presets
+
+ShadowVox ships with **42 built-in voice presets** organized into 8 categories. These let anyone use a famous voice without recording their own — just select a preset and speak.
+
+### Voice Mode
+
+Users can switch between two modes:
+- **🎤 Recorded** — Clone your own voice (requires \`!record\` first)
+- **🎭 Presets** — Select from 42 pre-configured celebrity voices
+
+### Categories & Presets
+
+| Category | Emoji | Presets |
+|---|---|---|
+| **Iconic Voices** | 🎙️ | Morgan Freeman, David Attenborough, James Earl Jones, Fran Drescher, Gilbert Gottfried, Christopher Walken, William Shatner |
+| **Hollywood Legends** | 🎬 | Arnold Schwarzenegger, Scarlett Johansson, Samuel L. Jackson, Tom Hanks, Meryl Streep, Keanu Reeves, Robert Downey Jr., Leonardo DiCaprio, Cate Blanchett, Ryan Reynolds, Zendaya |
+| **Comedians** | 😂 | Eddie Murphy, Robin Williams, Jim Carrey, Ricky Gervais, Dave Chappelle, Kathy Burke, John Cleese |
+| **Animated** | 🐭 | Mickey Mouse, SpongeBob SquarePants, Homer Simpson, Stewie Griffin, Shrek, Elmo |
+| **Tech Giants** | 💻 | Steve Jobs, Elon Musk, Bill Gates |
+| **Music Icons** | 🎵 | Taylor Swift, Beyoncé, Drake, Elvis Presley |
+| **Political** | 🌍 | Barack Obama, Winston Churchill |
+| **Sci-Fi & Fantasy** | 🚀 | Yoda, Gollum / Sméagol |
+
+### Commands
+
+| Command | Description |
+|---|---|
+| \`!voice list\` | Show all 42 presets grouped by category with availability status |
+| \`!voice <name>\` | Select a preset (fuzzy matching: \`!voice morgan\` → Morgan Freeman) |
+| \`!voice off\` | Clear preset selection, return to your recorded voice |
+| \`!say <text>\` | Speaks through the active preset (if selected) or your recorded profile |
+
+### How Presets Work
+
+1. Reference audio files are stored in \`presets/{presetId}.wav\`
+2. When a preset is selected, the bot uses that reference instead of your recorded profile
+3. The Python XTTS-v2 engine clones the voice from the reference and speaks your text
+4. VAD auto-cloning also respects the active preset
+
+### Generating Preset Audio Files
+
+A Python script is provided to generate unique reference samples for all 42 presets:
+
+\`\`\`bash
+# Generate all 42 presets
+python3 python/generate_presets.py
+
+# Regenerate existing files
+python3 python/generate_presets.py --force
+
+# Generate a single preset
+python3 python/generate_presets.py --preset yoda
+
+# See what would be generated
+python3 python/generate_presets.py --dry-run
+\`\`\`
+
+The script uses gTTS (Google Text-to-Speech) + Python's built-in \`audioop\` module to create unique-sounding voices with different pitches, rates, and filters. For best quality, replace generated files with real voice samples.
+
+### Dashboard Integration
+
+The Control Center (\`localhost:3000\`) lets you:
+- Browse presets with a category filter dropdown
+- Click any preset chip to select it
+- Click the ▶ button on any available preset to hear its raw reference audio
+- Type text and transmit it through the selected preset voice
+
+---
+
 ## 📁 Project Structure
 
 \`\`\`
@@ -456,16 +529,16 @@ ${tree
 ${Object.entries(pkg?.dependencies ?? {})
   .sort(([a], [b]) => a.localeCompare(b))
   .map(([name, ver]) => {
-    const purposes: Record<string, string> = {
+    const    purposes: Record<string, string> = {
       "@discordjs/opus": "Native Opus encoding/decoding",
       "@discordjs/voice": "Discord voice API integration",
+      "@sentry/node": "Error tracking and performance monitoring",
       axios: "HTTP client for Python API calls",
       cors: "CORS middleware for admin panel",
       "discord.js": "Discord bot framework",
       dotenv: "Environment variable loading",
       express: "Admin web server",
       "prism-media": "Audio stream transcoding",
-      wav: "WAV file parsing",
     };
     return `| \`${name}\` | \`${ver}\` | ${purposes[name] || "—"} |`;
   })
