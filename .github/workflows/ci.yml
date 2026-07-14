@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [main, master]
   schedule:
-    # Run self-heal daily at 3 AM UTC
+    # Run self-heal daily at 3 AM UTC — applies fixes + commits + creates issues
     - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
@@ -24,9 +24,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Required for auto-creating issues and committing fixes back
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+env:
+  # Used by gh CLI for issue creation
+  GH_TOKEN: ${{ github.token }}
+
 jobs:
   self-heal:
-    name: ⚕️ Self-Heal Analysis
+    name: ⚕️ Self-Heal & Issue Creator
     runs-on: ubuntu-latest
 
     steps:
@@ -34,6 +44,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Need token with write access for auto-commits
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🟢 Setup Bun
         uses: oven-sh/setup-bun@v1
@@ -54,20 +66,66 @@ jobs:
           source .venv/bin/activate
           pip install -r python/requirements.txt --quiet
 
+      # ── Run Diagnostic ──────────────────────────────────────────────
+
       - name: ⚕️ Run Self-Heal Diagnostic
         id: selfheal
         run: bunx tsx src/self-heal.ts --ci
         continue-on-error: true
 
-      - name: 📊 Check Report
-        id: check
-        run: |
-          REPORT=$(cat self-heal-report.json)
-          echo "### ⚕️ Self-Heal Report" >> $GITHUB_STEP_SUMMARY
-          echo '```json' >> $GITHUB_STEP_SUMMARY
-          echo "$REPORT" | head -30 >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "report=$REPORT" >> $GITHUB_OUTPUT
+      - name: 📊 Parse Report
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = 'self-heal-report.json';
+
+            if (!fs.existsSync(reportPath)) {
+              console.log('No report file found — diagnostic may have failed to produce output.');
+              core.setOutput('has_issues', 'false');
+              return;
+            }
+
+            const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+            const timestamp = report.timestamp || new Date().toISOString();
+
+            // Build summary for step summary
+            const summary = [
+              `## ⚕️ Self-Heal Report — ${timestamp.slice(0, 10)}`,
+              '',
+              `| Metric | Value |`,
+              `|---|---|`,
+              `| ✅ Passed | ${report.passed} |`,
+              `| 📁 Files scanned | ${report.summary.filesScanned} |`,
+              `| ❌ Errors | ${report.summary.errors} |`,
+              `| ⚠️  Warnings | ${report.summary.warnings} |`,
+              `| ℹ️  Info | ${report.summary.infos} |`,
+              `| 🛠️  Auto-fixed | ${report.summary.autoFixed} |`,
+              `| ❌ TypeScript errors | ${report.typeErrors} |`,
+              `| 🧪 Test failures | ${report.testFailures} |`,
+            ].join('\n');
+
+            core.setOutput('report_summary', summary);
+            core.setOutput('passed', String(report.passed));
+            core.setOutput('error_count', String(report.summary.errors));
+            core.setOutput('type_error_count', String(report.typeErrors));
+            core.setOutput('test_failure_count', String(report.testFailures));
+            core.setOutput('has_issues', String(
+              report.summary.errors > 0 ||
+              report.typeErrors > 0 ||
+              report.testFailures > 0
+            ));
+
+            // Store full report for issue creation
+            core.setOutput('report_json', JSON.stringify(report));
+
+            // Step summary
+            core.summary.clear();
+            core.summary.addRaw(summary);
+            await core.summary.write();
+
+      # ── TypeScript Typecheck ─────────────────────────────────────────
 
       - name: 📐 TypeScript Typecheck
         id: typecheck
@@ -82,6 +140,8 @@ jobs:
             echo "status=dirty" >> $GITHUB_OUTPUT
           fi
 
+      # ── Run Tests ───────────────────────────────────────────────────
+
       - name: 🧪 Run Tests
         id: tests
         run: |
@@ -95,26 +155,210 @@ jobs:
             echo "status=fail" >> $GITHUB_OUTPUT
           fi
 
-      - name: 🛠️ Apply Auto-Fixes (if --fix or schedule)
+      # ── Apply Auto-Fixes (daily schedule + manual fix/upgrade) ─────
+
+      - name: 🛠️ Apply Auto-Fixes
         if: >
           github.event_name == 'schedule' ||
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'fix') ||
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'upgrade')
+          github.event_name == 'workflow_dispatch'
         run: |
           MODE="${{ github.event.inputs.mode || 'fix' }}"
           bunx tsx src/self-heal.ts --"$MODE"
           echo "### 🛠️ Auto-Fixes Applied" >> $GITHUB_STEP_SUMMARY
           echo "Mode: $MODE" >> $GITHUB_STEP_SUMMARY
 
+      # ── Commit & Push Auto-Fixes Back (scheduled runs only) ────────
+
+      - name: 📤 Commit Auto-Fixes Back
+        if: github.event_name == 'schedule'
+        run: |
+          git config user.name "ShadowVox Self-Heal Bot"
+          git config user.email "selfheal@shadowvox-bot"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit — codebase is clean."
+          else
+            git commit -m "🤖 auto-fix: Daily self-heal maintenance ($(date +%Y-%m-%d))"
+            git push
+            echo "✅ Auto-fixes committed and pushed."
+          fi
+
+      # ── Upload Report Artifact ─────────────────────────────────────
+
       - name: 📤 Upload Report Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: self-heal-report
+          name: self-heal-report-${{ github.run_id }}
           path: self-heal-report.json
+          retention-days: 30
+
+      # ── Create GitHub Issues for Problems Found ────────────────────
+
+      - name: 🐛 Create GitHub Issues for Problems
+        if: steps.parse.outputs.has_issues == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const report = JSON.parse(`${{ steps.parse.outputs.report_json }}`);
+            const { owner, repo } = context.repo;
+
+            // ── Helper: Check if an open issue with the same title exists ──
+            async function issueExists(title) {
+              const { data: issues } = await github.rest.issues.listForRepo({
+                owner,
+                repo,
+                state: 'open',
+                labels: 'self-heal',
+              });
+              return issues.some(issue => issue.title === title);
+            }
+
+            // ── Helper: Create an issue if it doesn't already exist ──
+            async function createIssue(title, body, label) {
+              if (await issueExists(title)) {
+                console.log(`⏭️  Duplicate issue skipped: "${title}"`);
+                return null;
+              }
+              const { data: issue } = await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+                labels: ['self-heal', label],
+              });
+              console.log(`🐛 Created issue #${issue.number}: "${title}"`);
+              return issue;
+            }
+
+            const timestamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+            // ── Issue 1: TypeScript Compilation Errors ──
+            if (report.typeErrors > 0) {
+              const title = `❌ TypeScript Compilation Error — ${report.typeErrors} error(s) detected`;
+              const body = [
+                `## ❌ TypeScript Compilation Errors`,
+                ``,
+                `**Detected:** ${timestamp} UTC`,
+                `**Error count:** ${report.typeErrors}`,
+                ``,
+                `### Errors`,
+                ``,
+                `| File | Line | Code | Message |`,
+                `|---|---|---|---|`,
+                ...(report.issues || [])
+                  .filter(i => i.code.startsWith('TS'))
+                  .map(i => `| \`${i.file}\` | ${i.line} | \`${i.code}\` | ${i.message} |`),
+                ``,
+                `### Suggested Fix`,
+                `Run locally: \`bun tsc -b --noEmit\` to see details, then fix each error.`,
+                ``,
+                `---`,
+                `_Auto-generated by ⚕️ Self-Heal Engine — ${timestamp}_`,
+              ].join('\n');
+
+              await createIssue(title, body, 'type-error');
+            }
+
+            // ── Issue 2: Test Failures ──
+            if (report.testFailures > 0) {
+              const title = `🧪 Test Failures — ${report.testFailures} test(s) failing`;
+              const body = [
+                `## 🧪 Test Failures`,
+                ``,
+                `**Detected:** ${timestamp} UTC`,
+                `**Failed tests:** ${report.testFailures}`,
+                ``,
+                `### Failure Details`,
+                ``,
+                '```',
+                ...(report.issues || [])
+                  .filter(i => i.code === 'test-failure')
+                  .map(i => i.message),
+                '```',
+                ``,
+                `### Suggested Fix`,
+                `Run locally: \`bun test\` to see full output, then fix each failing test.`,
+                ``,
+                `---`,
+                `_Auto-generated by ⚕️ Self-Heal Engine — ${timestamp}_`,
+              ].join('\n');
+
+              await createIssue(title, body, 'test-failure');
+            }
+
+            // ── Issue 3: High-Severity Code Quality Issues ──
+            const criticalIssues = (report.issues || []).filter(
+              i => (i.severity === 'error' || i.code === 'hardcoded-secret') &&
+                   !i.code.startsWith('TS')
+            );
+
+            if (criticalIssues.length > 0) {
+              const title = `🔴 Critical Code Quality Issues — ${criticalIssues.length} error(s)`;
+              const body = [
+                `## 🔴 Critical Code Quality Issues`,
+                ``,
+                `**Detected:** ${timestamp} UTC`,
+                `**Issues found:** ${criticalIssues.length}`,
+                ``,
+                `### Issues`,
+                ``,
+                `| File | Line | Issue | Suggestion |`,
+                `|---|---|---|---|`,
+                ...criticalIssues.map(i =>
+                  `| \`${i.file}\` | ${i.line} | ${i.message.slice(0, 80)} | ${(i.suggestion || '').slice(0, 80)} |`
+                ),
+                ``,
+                `---`,
+                `_Auto-generated by ⚕️ Self-Heal Engine — ${timestamp}_`,
+              ].join('\n');
+
+              await createIssue(title, body, 'critical');
+            }
+
+            // ── Issue 4: Code Health Degradation Summary ──
+            const health = report.codeHealth || {};
+            const healthWarnings = [];
+            if (health.unusedImports > 5) healthWarnings.push(`Unused imports: ${health.unusedImports}`);
+            if (health.missingErrorHandling > 2) healthWarnings.push(`Missing error handling: ${health.missingErrorHandling}`);
+            if (health.hardcodedValues > 5) healthWarnings.push(`Hardcoded values: ${health.hardcodedValues}`);
+            if (health.anyTypes > 10) healthWarnings.push(`'any' types: ${health.anyTypes}`);
+
+            if (healthWarnings.length > 0) {
+              const title = `📊 Code Health Degradation — ${healthWarnings.length} area(s) need attention`;
+              const body = [
+                `## 📊 Code Health Degradation`,
+                ``,
+                `**Detected:** ${timestamp} UTC`,
+                ``,
+                `### Areas Needing Attention`,
+                ``,
+                ...healthWarnings.map(w => `- ⚠️ ${w}`),
+                ``,
+                `### Full Health Report`,
+                ``,
+                '```json',
+                JSON.stringify(health, null, 2),
+                '```',
+                ``,
+                `### Suggested Improvements`,
+                `1. Remove unused imports to reduce bundle size`,
+                `2. Add error handling to async functions to prevent crashes`,
+                `3. Move hardcoded values to environment variables`,
+                `4. Replace \`any\` types with specific types or \`unknown\``,
+                ``,
+                `---`,
+                `_Auto-generated by ⚕️ Self-Heal Engine — ${timestamp}_`,
+              ].join('\n');
+
+              await createIssue(title, body, 'code-health');
+            }
+
+            console.log('✅ Issue creation complete.');
 
   quality-gate:
     name: 🚦 Quality Gate
     needs: self-heal
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout
@@ -135,4 +379,7 @@ jobs:
         run: bun test
 
       - name: ✅ Gate Passed
-        run: echo "### ✅ Quality Gate Passed" >> $GITHUB_STEP_SUMMARY
+        run: |
+          echo "### ✅ Quality Gate Passed" >> $GITHUB_STEP_SUMMARY
+          echo "TypeScript: clean" >> $GITHUB_STEP_SUMMARY
+          echo "Tests: all passing" >> $GITHUB_STEP_SUMMARY
