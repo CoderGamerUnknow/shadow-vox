@@ -680,7 +680,7 @@ async function handleVoice(message: any, args: string[], rest: string) {
   return;
 }
 
-  // !voice <name> — select a preset by ID or name — select a preset by ID or name
+  // !voice <name> — select a preset by ID or name
   const query = sub || rest;
   const preset = findPreset(query);
 

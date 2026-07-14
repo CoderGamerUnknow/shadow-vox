@@ -17,6 +17,18 @@ import { FormData } from "undici";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL || "http://127.0.0.1:8000";
 
+/** V3: INTERNAL_API_KEY for authenticating requests to the Python TTS engine. */
+const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || "";
+
+/** Shared headers for all requests to the Python TTS server. */
+function pythonHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (INTERNAL_API_KEY) {
+    headers["X-API-KEY"] = INTERNAL_API_KEY;
+  }
+  return headers;
+}
+
 export interface CloneResult {
   status: string;
   file: string;
@@ -86,7 +98,10 @@ export async function generateClonedVoice(
       const response = await axios.post<CloneResult>(
         `${PYTHON_API_URL}/clone`,
         body,
-        { timeout: 60_000 }
+        {
+          timeout: 60_000,
+          headers: pythonHeaders(),
+        }
       );
 
       if (response.data.status === "success") {
@@ -152,7 +167,7 @@ export async function sendVoiceToVoice(
           `${PYTHON_API_URL}/voice-to-voice`,
           form,
           {
-            headers: { "Content-Type": "multipart/form-data" },
+            headers: { ...pythonHeaders(), "Content-Type": "multipart/form-data" },
             timeout: 120_000,
           }
         );
@@ -183,6 +198,7 @@ export async function healthCheck(): Promise<boolean> {
   try {
     const response = await axios.get(`${PYTHON_API_URL}/health`, {
       timeout: 5_000,
+      headers: pythonHeaders(),
     });
     return response.data.status === "ok" || response.data.model_loaded;
   } catch {

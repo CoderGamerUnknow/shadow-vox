@@ -24,7 +24,8 @@ from typing import Optional
 
 import torch
 import uvicorn
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Security
+from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
 
 from TTS.api import TTS
@@ -36,6 +37,38 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("shadow-vox")
+
+# ── Security: INTERNAL_API_KEY ────────────────────────────────────────────
+# Every request to the Python TTS engine must include an X-API-KEY header
+# matching the INTERNAL_API_KEY environment variable. This prevents
+# unauthorized access to the voice-cloning pipeline from anything other
+# than the official Discord bot / admin panel.
+
+API_KEY_NAME = "X-API-KEY"
+_internal_api_key = os.getenv("INTERNAL_API_KEY", "")
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+
+def verify_api_key(api_key: str = Security(api_key_header)):
+    """
+    Dependency that checks for a valid INTERNAL_API_KEY on every request.
+    If INTERNAL_API_KEY is not set in the environment, authentication is
+    skipped (allows local development without a key).
+    """
+    if not _internal_api_key:
+        # No key configured — allow all requests (local dev mode)
+        return True
+    if not api_key:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: Missing X-API-KEY header. Set INTERNAL_API_KEY in .env",
+        )
+    if api_key != _internal_api_key:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: Invalid API key",
+        )
+    return True
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent  # project root
@@ -200,7 +233,7 @@ async def transcribe_audio(audio_path: str) -> str:
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
 
-@app.get("/health")
+@app.get("/health", dependencies=[Depends(verify_api_key)])
 def health():
     """Health-check endpoint for the Node.js bot to poll."""
     model_loaded = _model is not None
@@ -213,7 +246,7 @@ def health():
     }
 
 
-@app.post("/clone", response_model=CloneResponse)
+@app.post("/clone", response_model=CloneResponse, dependencies=[Depends(verify_api_key)])
 def clone_voice(request: CloneRequest):
     """
     Clone a user's voice using their recorded reference audio and
@@ -280,7 +313,7 @@ def clone_voice(request: CloneRequest):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@app.post("/voice-to-voice", response_model=V2VResponse)
+@app.post("/voice-to-voice", response_model=V2VResponse, dependencies=[Depends(verify_api_key)])
 async def voice_to_voice_endpoint(
     audio: UploadFile = File(...),
     source_user_id: str = Form(...),

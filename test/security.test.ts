@@ -1,7 +1,7 @@
 /**
  * ShadowVox — Security Hardening Tests
  *
- * Validates all 15 security hardening layers applied to the codebase.
+ * Validates all 16 security hardening layers applied to the codebase.
  * Run with: bun test
  */
 
@@ -454,12 +454,12 @@ describe("Environment variable validation", () => {
 // Cross-cutting: README.md security documentation
 // =========================================================================
 describe("README.md security documentation", () => {
-  it("should document all 15 security hardening layers in README.md", async () => {
+  it("should document all 16 security hardening layers in README.md", async () => {
     const readme = await Bun.file("README.md").text();
     
     // Should have the security section
     expect(readme).toMatch(/🛡️ Security/);
-    expect(readme).toMatch(/15 security layers/);
+    expect(readme).toMatch(/16 security layers/);
     
     // Should mention key technologies
     expect(readme).toMatch(/helmet/i);

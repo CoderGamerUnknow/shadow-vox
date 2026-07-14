@@ -592,7 +592,7 @@ ${envVars
 
 ## 🛡️ Security
 
-ShadowVox has been hardened with **15 security layers** covering shell injection, path traversal, rate limiting, XSS, CSRF, and more.
+ShadowVox V3.0.0 has been hardened with **16 security layers** covering shell injection, path traversal, rate limiting, XSS, CSRF, internal API auth, and more.
 
 ### Hardening Layers
 
@@ -613,6 +613,7 @@ ShadowVox has been hardened with **15 security layers** covering shell injection
 | 13 | **Removed deprecated Sentry integration** — Outdated \`nodeContextIntegration()\` API call removed, replaced with Sentry v8 default integrations | ℹ️ Low | \`src/instrument.ts\` |
 | 14 | **VAD async handling** — \`onSpeakingStart\` now properly awaits and catches errors from \`recordUserVoice\` with structured try/catch instead of promise chains | ℹ️ Low | \`src/vad.ts\` |
 | 15 | **Empty catch block removed** — Removed a dead NOOP try/catch in the auto-profile section that was silently swallowing errors | ℹ️ Low | \`src/vad.ts\` |
+| 16 | **INTERNAL_API_KEY auth (V3)** — Every HTTP request from Node.js to Python carries a shared secret in the \`X-API-KEY\` header; Python rejects unauthorized requests with 403. Set via \`INTERNAL_API_KEY\` env var. | 🔴 Critical | \`python/tts_server.py\`, \`src/cloner.ts\` |
 
 ### Security Best Practices
 

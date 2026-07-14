@@ -47,62 +47,6 @@ const DEFAULT_OPTIONS: RecordingOptions = {
 
 // ── PCM → WAV ─────────────────────────────────────────────────────────────
 
-/**
- * Convert raw PCM to a WAV file using FFmpeg.
- * Assumes input: 48kHz, 16-bit signed, stereo PCM.
- */
-async function convertPcmToWav(userId: string): Promise<string> {
-  const pcmPath = join(RECORDINGS_DIR, `${userId}.pcm`);
-  const wavPath = join(RECORDINGS_DIR, `${userId}.wav`);
-
-  if (!existsSync(pcmPath)) {
-    throw new Error(`PCM file not found: ${pcmPath}`);
-  }
-
-  console.log(`🔄 Converting PCM → WAV for user ${userId}`);
-
-  return Sentry.startSpan(
-    {
-      name: "ffmpeg-convert",
-      op: "audio.transcode",
-      attributes: {
-        "audio.user_id": userId,
-        "audio.input_format": "pcm",
-        "audio.output_format": "wav",
-        "audio.input_path": pcmPath,
-      },
-    },
-    async () => {
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const proc = spawn("ffmpeg", [
-            "-y",
-            "-f", "s16le",
-            "-ar", "48000",
-            "-ac", "2",
-            "-i", pcmPath,
-            wavPath,
-          ], { timeout: 15_000 });
-          proc.on("exit", (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`FFmpeg exited with code ${code}`));
-          });
-          proc.on("error", reject);
-        });
-        // Clean up the raw PCM file
-        unlinkSync(pcmPath);
-        console.log(`✅ WAV saved: ${wavPath}`);
-        return wavPath;
-      } catch (err) {
-        console.error("❌ FFmpeg conversion failed:", err);
-        throw new Error(
-          "FFmpeg conversion failed. Ensure ffmpeg is installed on the system.",
-        );
-      }
-    },
-  );
-}
-
 // ── Record ────────────────────────────────────────────────────────────────
 
 /**
@@ -162,8 +106,7 @@ export async function recordUserVoice(
 
         // Rename the timestamped PCM to the standard name
         try {
-          // We just pass the actual pcm path to convert and it'll rename
-          convertPcmToWavCustom(pcmPath, standardWav)
+          convertPcmToWavCore(pcmPath, standardWav)
             .then((wavPath) => resolve(wavPath))
             .catch(reject);
         } catch (err) {
@@ -178,10 +121,11 @@ export async function recordUserVoice(
 }
 
 /**
- * Convert a specific PCM file to WAV at the target path.
- * This variant allows custom PCM input paths.
+ * Convert a PCM file to WAV using FFmpeg.
+ * Core conversion function used by both standard and custom recording flows.
+ * Assumes input: 48kHz, 16-bit signed, stereo PCM.
  */
-async function convertPcmToWavCustom(
+async function convertPcmToWavCore(
   pcmPath: string,
   wavPath: string,
 ): Promise<string> {
@@ -193,7 +137,7 @@ async function convertPcmToWavCustom(
 
   return Sentry.startSpan(
     {
-      name: "ffmpeg-convert-custom",
+      name: "ffmpeg-convert",
       op: "audio.transcode",
       attributes: {
         "audio.input_path": pcmPath,

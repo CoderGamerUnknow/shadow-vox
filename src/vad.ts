@@ -309,21 +309,17 @@ export class VoiceActivityDetector {
           try {
             const profile = profileStore.getProfile(this.config.v2vTargetUserId);
             if (profile) {
-              const audioPath = await generateClonedVoice(
-                this.config.v2vTargetUserId,
-                `[v2v from ${userId}]`,
-              );
               // The actual V2V flow uses the Python /voice-to-voice endpoint
-              // which handles STT → TTS in one call
-              const { sendVoiceToVoice } = await import("./cloner.js");
-              const result = await sendVoiceToVoice(
-                userId, // The recorded audio is from this user
-                this.config.v2vTargetUserId, // Cloned as this user
-              );
-              if (result) {
-                playClonedAudio(this.connection, result);
-              }
-              this.callbacks.onCloneComplete?.(userId, audioPath);
+          // which handles STT → TTS in one call
+          const { sendVoiceToVoice } = await import("./cloner.js");
+          const result = await sendVoiceToVoice(
+            userId, // The recorded audio is from this user
+            this.config.v2vTargetUserId, // Cloned as this user
+          );
+          if (result) {
+            playClonedAudio(this.connection, result);
+            this.callbacks.onCloneComplete?.(this.config.v2vTargetUserId, result);
+          }
             }
           } catch (err) {
             console.error(`❌ V2V failed:`, err);

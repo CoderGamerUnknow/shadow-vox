@@ -8,7 +8,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.5-3178c6" />
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green" />
-  <img alt="Lines" src="https://img.shields.io/badge/source-5,030_lines-22d3ee" />
+  <img alt="Lines" src="https://img.shields.io/badge/source-4,987_lines-22d3ee" />
 </p>
 
 ---
@@ -305,6 +305,7 @@ The Control Center (`localhost:3000`) lets you:
 
 ```
 📄 .env.example
+📄 Dockerfile
 📄 LICENSE
 📄 README.md
 📄 bun.lock
@@ -316,6 +317,9 @@ The Control Center (`localhost:3000`) lets you:
   📄 dashboard/app.js
   📄 dashboard/index.html
   📄 dashboard/style.css
+📄 deploy.sh
+📄 docker-compose.yml
+📄 docker-entrypoint.sh
 📁 logs
   📁 logs/self-heal
     📄 logs/self-heal/latest.log
@@ -446,21 +450,21 @@ python tts_server.py
 
 | Variable | Required | Description |
 |---|---|---|
-| `DISCORD_BOT_TOKEN` | ✅ Yes | Get yours from https://discord.com/developers/applications |
-| `PYTHON_API_URL` | ❌ No | Python TTS API URL (default: http://127.0.0.1:8000) |
-| `TARGET_GUILD_ID` | ❌ No | Target guild (server) ID for auto-join (optional) |
-| `TARGET_VOICE_CHANNEL_ID` | ❌ No | Target voice channel ID to auto-join (optional) |
-| `ADMIN_PORT` | ❌ No | Admin server listens on this port (default: 3000) |
-| `ADMIN_DISABLED` | ❌ No | Set to "true" to disable the admin web server |
-| `ADMIN_API_KEY` | ❌ No | Optional API key for securing admin endpoints |
-| `SENTRY_DSN` | ❌ No | SENTRY_TRACES_SAMPLE_RATE controls performance tracing (0.0-1.0, defaults to 0.1) |
-| `SENTRY_TRACES_SAMPLE_RATE` | ❌ No | — |
+| `DISCORD_BOT_TOKEN` | ✅ Yes | Get yours at https://discord.com/developers/applications |
+| `TARGET_GUILD_ID` | ❌ No | Discord target server and voice channel (optional, for auto-join on startup) |
+| `TARGET_VOICE_CHANNEL_ID` | ❌ No | — |
+| `ADMIN_PORT` | ❌ No | Admin web panel port (default: 3000) |
+| `ADMIN_API_KEY` | ❌ No | Set this to a random string to protect your admin panel endpoints. |
+| `PYTHON_API_URL` | ❌ No | Python TTS server URL (default: http://127.0.0.1:8000) |
+| `INTERNAL_API_KEY` | ❌ No | The bot sends this as X-API-KEY header on every request to /clone, /health, /voice-to-voice. |
+| `SENTRY_DSN` | ❌ No | Sentry DSN for error tracking (optional) |
+| `SENTRY_TRACES_SAMPLE_RATE` | ❌ No | Sentry tracing sample rate (0.0 - 1.0, default: 0.1) |
 
 ---
 
 ## 🛡️ Security
 
-ShadowVox has been hardened with **15 security layers** covering shell injection, path traversal, rate limiting, XSS, CSRF, and more.
+ShadowVox V3.0.0 has been hardened with **16 security layers** covering shell injection, path traversal, rate limiting, XSS, CSRF, internal API auth, and more.
 
 ### Hardening Layers
 
@@ -481,6 +485,7 @@ ShadowVox has been hardened with **15 security layers** covering shell injection
 | 13 | **Removed deprecated Sentry integration** — Outdated `nodeContextIntegration()` API call removed, replaced with Sentry v8 default integrations | ℹ️ Low | `src/instrument.ts` |
 | 14 | **VAD async handling** — `onSpeakingStart` now properly awaits and catches errors from `recordUserVoice` with structured try/catch instead of promise chains | ℹ️ Low | `src/vad.ts` |
 | 15 | **Empty catch block removed** — Removed a dead NOOP try/catch in the auto-profile section that was silently swallowing errors | ℹ️ Low | `src/vad.ts` |
+| 16 | **INTERNAL_API_KEY auth (V3)** — Every HTTP request from Node.js to Python carries a shared secret in the `X-API-KEY` header; Python rejects unauthorized requests with 403. Set via `INTERNAL_API_KEY` env var. | 🔴 Critical | `python/tts_server.py`, `src/cloner.ts` |
 
 ### Security Best Practices
 
@@ -710,5 +715,5 @@ Discord Voice Channel
 <p align="center">
   <sub>Generated automatically by <strong>/generate-readme</strong> • ShadowVox v1.0.0</sub>
   <br />
-  <sub>🕐 <strong>Last updated:</strong> 2026-07-14 16:00:36 UTC</sub>
+  <sub>🕐 <strong>Last updated:</strong> 2026-07-14 16:22:09 UTC</sub>
 </p>
