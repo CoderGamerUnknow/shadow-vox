@@ -17,15 +17,21 @@ export interface CloneResult {
 }
 
 /**
- * Send a user's voice profile and text to the Python TTS server for cloning.
+ * Send a voice profile or preset reference to the Python TTS server for cloning.
  *
- * @param userId  - Discord user snowflake (used to locate the .wav file)
- * @param text    - The text to synthesize in the cloned voice
- * @returns       - Local filesystem path to the generated audio
+ * @param userId          - Discord user snowflake or preset ID (used for output naming)
+ * @param text            - The text to synthesize in the cloned voice
+ * @param speakerWavPath  - Optional path to a reference .wav file.
+ *                           If omitted, the server looks for recordings/{userId}.wav.
+ *                           If provided (e.g. presets/{presetId}.wav), that file is used.
+ * @param language        - Language code for multilingual TTS (default: "en")
+ * @returns               - Local filesystem path to the generated audio
  */
 export async function generateClonedVoice(
   userId: string,
-  text: string
+  text: string,
+  speakerWavPath?: string,
+  language = "en",
 ): Promise<string> {
   return Sentry.startSpan(
     {
@@ -34,19 +40,27 @@ export async function generateClonedVoice(
       attributes: {
         "clone.user_id": userId,
         "clone.text_length": text.length,
+        "clone.speaker_wav": speakerWavPath ?? "default",
         "clone.api_url": PYTHON_API_URL,
       },
     },
     async () => {
       console.log(`🔊 Requesting voice clone for user ${userId} ...`);
 
+      const body: Record<string, unknown> = {
+        user_id: userId,
+        text,
+        language,
+      };
+
+      // If a custom speaker path is provided, include it in the request
+      if (speakerWavPath) {
+        body.speaker_wav_path = speakerWavPath;
+      }
+
       const response = await axios.post<CloneResult>(
         `${PYTHON_API_URL}/clone`,
-        {
-          user_id: userId,
-          text,
-          language: "en",
-        },
+        body,
         { timeout: 60_000 }
       );
 

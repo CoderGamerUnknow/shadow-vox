@@ -1,5 +1,7 @@
 // ── State ──
-let state = { bot: null, connection: null, vad: null, profiles: null, logs: [] };
+let state = { bot: null, connection: null, vad: null, profiles: null, presets: null, logs: [] };
+let voiceMode = 'profile'; // 'profile' or 'preset'
+let selectedPresetId = null;
 let apiKey = '';
 const urlParams = new URLSearchParams(window.location.search);
 apiKey = urlParams.get('key') || '';
@@ -119,6 +121,8 @@ function renderAll() {
   // Profiles
   renderProfiles();
   renderSpeakDropdown();
+  renderPresetDropdown();
+  renderActivePresetBadge();
   renderLogs();
 }
 
@@ -163,15 +167,95 @@ function renderSpeakDropdown() {
   const btn = document.getElementById('speakBtn');
   const profiles = state.profiles?.list || [];
 
-  if (profiles.length) {
-    const currentValue = sel.value;
-    sel.innerHTML = '<option value="">Select a voice profile...</option>' +
-      profiles.map(p => '<option value="' + p.userId + '"' + (p.userId === currentValue ? ' selected' : '') + '>' +
-        escapeHtml(p.username || p.userId) + '</option>').join('');
-    btn.disabled = false;
+  if (voiceMode === 'profile') {
+    sel.style.display = '';
+    if (profiles.length) {
+      const currentValue = sel.value;
+      sel.innerHTML = '<option value="">Select a voice profile...</option>' +
+        profiles.map(p => '<option value="' + p.userId + '"' + (p.userId === currentValue ? ' selected' : '') + '>' +
+          escapeHtml(p.username || p.userId) + '</option>').join('');
+      btn.disabled = false;
+    } else {
+      sel.innerHTML = '<option value="">— No profiles —</option>';
+      btn.disabled = true;
+    }
+  }
+}
+
+// ── Presets ──
+function renderPresetDropdown() {
+  const catSel = document.getElementById('presetCategory');
+  if (!catSel) return;
+  
+  const presets = state.presets?.list || [];
+  const categories = [...new Set(presets.map(p => p.category))];
+  
+  const currentValue = catSel.value;
+  catSel.innerHTML = '<option value="">— All Categories —</option>' +
+    categories.map(c => '<option value="' + c + '"' + (c === currentValue ? ' selected' : '') + '>' +
+      escapeHtml(c.charAt(0).toUpperCase() + c.slice(1).replace('-', ' ')) + '</option>').join('');
+}
+
+function renderPresetGrid() {
+  const grid = document.getElementById('presetGrid');
+  if (!grid) return;
+  
+  const presets = state.presets?.list || [];
+  if (!presets.length) { grid.innerHTML = ''; return; }
+  
+  const category = document.getElementById('presetCategory')?.value || '';
+  const filtered = category ? presets.filter(p => p.category === category) : presets;
+  
+  grid.innerHTML = filtered.map(p => {
+    const isActive = selectedPresetId === p.id;
+    const availClass = p.available ? '' : 'unavailable';
+    const activeClass = isActive ? 'active' : '';
+    return '<div class="preset-chip ' + availClass + ' ' + activeClass + '" ' +
+      (p.available ? 'onclick="selectPreset(\'' + p.id + '\')"' : 'title="Place presets/' + p.id + '.wav to activate"') + '>' +
+      '<span class="chip-emoji">' + p.emoji + '</span>' +
+      '<span class="chip-name">' + escapeHtml(p.name) + '</span>' +
+    '</div>';
+  }).join('');
+}
+
+function renderActivePresetBadge() {
+  const badge = document.getElementById('presetBadge');
+  if (!badge) return;
+  const active = state.activePreset;
+  if (active) {
+    badge.innerHTML = active.emoji + ' ' + escapeHtml(active.name);
+    badge.style.display = '';
   } else {
-    sel.innerHTML = '<option value="">— No profiles —</option>';
-    btn.disabled = true;
+    badge.style.display = 'none';
+  }
+}
+
+// ── Voice Mode Switching ──
+function switchVoiceMode(mode) {
+  voiceMode = mode;
+  const tabs = document.querySelectorAll('.voice-tab');
+  tabs.forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
+  
+  document.getElementById('speakUserGroup').style.display = mode === 'profile' ? '' : 'none';
+  document.getElementById('presetGroup').style.display = mode === 'preset' ? '' : 'none';
+  document.getElementById('presetGrid').style.display = mode === 'preset' ? '' : 'none';
+  
+  if (mode === 'preset') {
+    renderPresetGrid();
+  }
+  
+  const btn = document.getElementById('speakBtn');
+  btn.disabled = (mode === 'profile' && (!state.profiles?.list?.length));
+}
+
+function selectPreset(presetId) {
+  selectedPresetId = selectedPresetId === presetId ? null : presetId;
+  document.getElementById('speakBtn').disabled = !selectedPresetId;
+  renderPresetGrid();
+  
+  const preset = (state.presets?.list || []).find(p => p.id === presetId);
+  if (preset) {
+    showToast('🎭 Selected ' + preset.emoji + ' ' + preset.name);
   }
 }
 
@@ -262,12 +346,11 @@ async function leaveVC() {
 
 // ── Speak ──
 document.getElementById('speakBtn').addEventListener('click', async () => {
-  const userId = document.getElementById('speakUser').value;
   const text = document.getElementById('speakText').value.trim();
   const lang = document.getElementById('speakLang').value;
 
-  if (!userId || !text) {
-    showToast('Select a profile and enter text', 'error');
+  if (!text) {
+    showToast('Enter text to speak', 'error');
     return;
   }
 
@@ -275,15 +358,31 @@ document.getElementById('speakBtn').addEventListener('click', async () => {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Cloning...';
 
+  const body = { text, language: lang };
+
+  if (voiceMode === 'preset' && selectedPresetId) {
+    body.presetId = selectedPresetId;
+  } else {
+    const userId = document.getElementById('speakUser').value;
+    if (!userId) {
+      showToast('Select a profile or preset first', 'error');
+      btn.disabled = false;
+      btn.innerHTML = '<span class="btn-icon">📡</span> Transmit to VC';
+      return;
+    }
+    body.userId = userId;
+  }
+
   try {
     const res = await fetch('/api/speak', {
       method: 'POST',
       headers: apiHeaders(),
-      body: JSON.stringify({ userId, text, language: lang }),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     if (data.status === 'success') {
-      showToast('🔊 Voice cloned and transmitted!');
+      const label = data.preset || 'Voice cloned';
+      showToast('🔊 ' + label + ' transmitted!');
       document.getElementById('speakText').value = '';
     } else {
       showToast('❌ ' + (data.error || 'Failed'), 'error');

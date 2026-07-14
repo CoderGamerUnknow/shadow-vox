@@ -24,6 +24,13 @@ import {
   VoiceConnectionStatus,
   entersState,
 } from "@discordjs/voice";
+import {
+  VOICE_PRESETS,
+  findPreset,
+  refreshPresetAvailability,
+  CATEGORY_META,
+  type VoicePreset,
+} from "./presets.js";
 
 // ── Dashboard path ────────────────────────────────────────────────────────
 const _filename = fileURLToPath(import.meta.url);
@@ -42,6 +49,7 @@ export interface BotState {
   setDefaultCloneText: (text: string) => void;
   startVad: (connection: VoiceConnection) => void;
   stopVad: () => void;
+  activePreset: VoicePreset | null;
 }
 
 // ── Activity Log Buffer ───────────────────────────────────────────────────
@@ -127,25 +135,91 @@ export function startAdminServer(port: number, state: BotState): void {
         })),
       },
       cloneText: state.defaultCloneText,
+      activePreset: state.activePreset
+        ? {
+            id: state.activePreset.id,
+            name: state.activePreset.name,
+            emoji: state.activePreset.emoji,
+            category: state.activePreset.category,
+            description: state.activePreset.description,
+            available: state.activePreset.available,
+            language: state.activePreset.language,
+          }
+        : null,
+      presets: {
+        total: VOICE_PRESETS.length,
+        available: VOICE_PRESETS.filter((p) => p.available).length,
+        list: VOICE_PRESETS.map((p) => ({
+          id: p.id,
+          name: p.name,
+          emoji: p.emoji,
+          category: p.category,
+          description: p.description,
+          available: p.available,
+          language: p.language,
+        })),
+      },
       logs: activityLog.slice(-20),
     });
   });
 
-  /** POST /api/speak — clone and play text through a user's voice */
+  /** POST /api/speak — clone and play text through a user's voice or preset */
   app.post("/api/speak", async (req: Request, res: Response) => {
-    const { userId, text, language } = req.body as {
+    const { userId, text, language, presetId } = req.body as {
       userId?: string;
       text?: string;
       language?: string;
+      presetId?: string;
     };
 
-    if (!userId || !text) {
-      res.status(400).json({ error: "userId and text are required" });
+    if (!text) {
+      res.status(400).json({ error: "text is required" });
       return;
     }
 
     if (!state.activeConnection) {
       res.status(400).json({ error: "Bot is not connected to a voice channel" });
+      return;
+    }
+
+    // Support preset speak
+    if (presetId) {
+      const preset = findPreset(presetId);
+      if (!preset) {
+        res.status(404).json({ error: `Preset '${presetId}' not found` });
+        return;
+      }
+      if (!preset.available) {
+        res.status(404).json({
+          error: `Preset '${preset.name}' is not available (no .wav file in presets/)`,
+        });
+        return;
+      }
+      refreshPresetAvailability(preset.id);
+      addLog(
+        "info",
+        `🗣️  Admin triggered ${preset.emoji} ${preset.name}: "${text.slice(0, 50)}..."`,
+      );
+      try {
+        const audioPath = await generateClonedVoice(
+          `preset_${preset.id}`,
+          text,
+          preset.wavPath,
+          language ?? preset.language,
+        );
+        playClonedAudio(state.activeConnection, audioPath);
+        addLog("success", `🔊 ${preset.emoji} ${preset.name} played`);
+        res.json({ status: "success", file: audioPath, preset: preset.name });
+      } catch (err) {
+        addLog("error", `❌ Preset clone failed: ${err}`);
+        res.status(500).json({ error: String(err) });
+      }
+      return;
+    }
+
+    // Fallback to user profile
+    if (!userId) {
+      res.status(400).json({ error: "userId or presetId is required" });
       return;
     }
 

@@ -17,6 +17,7 @@ import { profileStore, type VoiceProfile } from "./profiles.js";
 import { recordUserVoice } from "./recorder.js";
 import { generateClonedVoice } from "./cloner.js";
 import { playClonedAudio } from "./player.js";
+import { type VoicePreset, findPreset } from "./presets.js";
 
 // ── Configuration ─────────────────────────────────────────────────────────
 
@@ -50,6 +51,13 @@ export interface VadConfig {
    * (without a profile) stops speaking.
    */
   autoProfile: boolean;
+  /**
+   * Active preset ID for voice cloning.
+   * When set, all auto-clones use this preset instead of the
+   * user's recorded voice profile.
+   * Set to empty string to use recorded profiles.
+   */
+  activePresetId: string;
 }
 
 const DEFAULTS: VadConfig = {
@@ -61,6 +69,7 @@ const DEFAULTS: VadConfig = {
   listenToAll: true,
   autoClone: true,
   autoProfile: true,
+  activePresetId: "",
 };
 
 // ── Event Types ───────────────────────────────────────────────────────────
@@ -267,6 +276,7 @@ export class VoiceActivityDetector {
           "vad.user_id": userId,
           "vad.cooldown_ms": this.config.cooldownMs,
           "vad.clone_text_length": this.config.cloneText.length,
+          "vad.active_preset": this.config.activePresetId || "none",
         },
       },
       async () => {
@@ -279,20 +289,40 @@ export class VoiceActivityDetector {
         this.lastTriggered.set(userId, Date.now());
 
         this.callbacks.onCloneStart?.(userId);
-        console.log(`🗣️  VAD auto-cloning voice for ${userId} ...`);
 
-        try {
-          const audioPath = await generateClonedVoice(
-            userId,
-            this.config.cloneText,
+        // Determine if we should use a preset or the user's recorded profile
+        const presetId = this.config.activePresetId;
+        const preset = presetId ? findPreset(presetId) : undefined;
+
+        if (preset && preset.available) {
+          console.log(
+            `🗣️  VAD auto-cloning as preset ${preset.emoji} ${preset.name} for ${userId} ...`,
           );
-          this.callbacks.onCloneComplete?.(userId, audioPath);
-
-          playClonedAudio(this.connection, audioPath);
-          console.log(`🔊 VAD played cloned voice for ${userId}`);
-        } catch (err) {
-          console.error(`❌ VAD clone failed for ${userId}:`, err);
-          this.callbacks.onError?.(userId, String(err));
+          try {
+            const audioPath = await generateClonedVoice(
+              `preset_${preset.id}`,
+              this.config.cloneText,
+              preset.wavPath,
+              preset.language,
+            );
+            this.callbacks.onCloneComplete?.(userId, audioPath);
+            playClonedAudio(this.connection, audioPath);
+            console.log(`🔊 VAD played ${preset.emoji} ${preset.name} for ${userId}`);
+          } catch (err) {
+            console.error(`❌ VAD clone failed for ${userId}:`, err);
+            this.callbacks.onError?.(userId, String(err));
+          }
+        } else {
+          console.log(`🗣️  VAD auto-cloning voice for ${userId} ...`);
+          try {
+            const audioPath = await generateClonedVoice(userId, this.config.cloneText);
+            this.callbacks.onCloneComplete?.(userId, audioPath);
+            playClonedAudio(this.connection, audioPath);
+            console.log(`🔊 VAD played cloned voice for ${userId}`);
+          } catch (err) {
+            console.error(`❌ VAD clone failed for ${userId}:`, err);
+            this.callbacks.onError?.(userId, String(err));
+          }
         }
       },
     );

@@ -31,6 +31,13 @@ import { generateClonedVoice, healthCheck } from "./cloner.js";
 import { playClonedAudio } from "./player.js";
 import { VoiceActivityDetector, type VadConfig } from "./vad.js";
 import { profileStore, type VoiceProfile } from "./profiles.js";
+import {
+  VOICE_PRESETS,
+  findPreset,
+  getPresetsByCategory,
+  CATEGORY_META,
+  type VoicePreset,
+} from "./presets.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -39,6 +46,9 @@ const TARGET_GUILD_ID = process.env.TARGET_GUILD_ID;
 const TARGET_VOICE_CHANNEL_ID = process.env.TARGET_VOICE_CHANNEL_ID;
 const ADMIN_PORT = parseInt(process.env.ADMIN_PORT || "3000", 10);
 const ADMIN_ENABLED = process.env.ADMIN_DISABLED !== "true";
+
+/** Number of available presets (those with .wav files on disk). */
+const availablePresetCount = VOICE_PRESETS.filter((p) => p.available).length;
 
 if (!TOKEN) {
   console.error("❌ DISCORD_BOT_TOKEN is not set in .env");
@@ -53,6 +63,12 @@ let activeConnection: VoiceConnection | null = null;
 let vadDetector: VoiceActivityDetector | null = null;
 let defaultCloneText: string =
   "Hello, I am your voice clone. I can sound just like you!";
+
+/** Currently active voice preset (null = use recorded profile). */
+let activePreset: VoicePreset | null = null;
+
+/** User → preset overrides for auto-cloning specific users with presets. */
+const userPresetOverrides = new Map<string, string>();
 
 function setActiveConnection(conn: VoiceConnection | null) {
   activeConnection = conn;
@@ -114,6 +130,7 @@ client.once(Events.ClientReady, async (readyClient: Client<true>) => {
       setDefaultCloneText,
       startVad,
       stopVad,
+      activePreset,
     });
   }
 
@@ -232,6 +249,9 @@ client.on(Events.MessageCreate, async (message) => {
         break;
       case "setclone":
         await handleSetClone(message, rest);
+        break;
+      case "voice":
+        await handleVoice(message, args, rest);
         break;
       case "vad":
         await handleVadCommand(message, args);
@@ -408,7 +428,157 @@ async function handleRecord(message: any) {
   }
 }
 
-/** !say <text> — Clone the sender's voice and speak */
+/** !voice — List or select a voice preset */
+async function handleVoice(message: any, args: string[], rest: string) {
+  const sub = args[1]?.toLowerCase();
+
+  // !voice list — show all presets grouped by category
+  if (!sub || sub === "list" || sub === "all") {
+    const categories = Array.from(new Set(VOICE_PRESETS.map((p) => p.category)));
+    const lines: string[] = [];
+
+    for (const cat of categories) {
+      const meta = CATEGORY_META[cat];
+      const presets = VOICE_PRESETS.filter((p) => p.category === cat);
+      const avail = presets.filter((p) => p.available).length;
+      lines.push(`**${meta?.emoji ?? "📁"} ${meta?.label ?? cat}** (${avail}/${presets.length} ready)`);
+      for (const p of presets) {
+        const status = p.available ? "✅" : "⏳";
+        lines.push(`  ${status} ${p.emoji} **${p.name}** — \`!voice ${p.id}\``);
+      }
+      lines.push("");
+    }
+
+    // Chunk the response if it's too long (Discord limit: 2000 chars)
+    const full = lines.join("\n");
+    const chunks: string[] = [];
+    let current = "";
+    for (const line of lines) {
+      if ((current + "\n" + line).length > 1900 && current) {
+        chunks.push(current);
+        current = line;
+      } else {
+        current = current ? current + "\n" + line : line;
+      }
+    }
+    if (current) chunks.push(current);
+
+    await message.reply({
+      embeds: [
+        {
+          color: 0x8b5cf6,
+          title: `🎭 Voice Presets (${VOICE_PRESETS.length})`,
+          description:
+            `**${availablePresetCount} presets available** • Use \`!voice <name>\` to select\n` +
+            `Use \`!voice off\` to return to your own voice\n` +
+            `Place .wav files in \`presets/\` to activate presets`,
+          fields: [
+            {
+              name: "Current Preset",
+              value: activePreset
+                ? `${activePreset.emoji} **${activePreset.name}**`
+                : "🎤 Your own voice (no preset)",
+              inline: false,
+            },
+            {
+              name: "Quick Select",
+              value:
+                "`!voice morgan` → Morgan Freeman\n" +
+                "`!voice arnold` → Arnold Schwarzenegger\n" +
+                "`!voice yoda` → Yoda\n" +
+                "`!voice off` → Back to your voice",
+              inline: false,
+            },
+          ],
+          footer: { text: `Use !voice <id> to select • Total: ${VOICE_PRESETS.length} presets` },
+        },
+      ],
+    });
+    return;
+  }
+
+  // !voice off / none — clear preset, use recorded voice
+  if (sub === "off" || sub === "none" || sub === "clear") {
+    activePreset = null;
+    vadDetector?.setConfig({ activePresetId: "" });
+    await message.reply("🎤 Voice preset cleared — you'll now use your recorded voice.");
+    return;
+  }
+
+  // !voice <name> — select a preset by ID or name
+  const query = sub || rest;
+  const preset = findPreset(query);
+
+  if (!preset) {
+    // Try fuzzy search
+    const fuzzy = VOICE_PRESETS.filter(
+      (p) =>
+        p.id.includes(query) ||
+        p.name.toLowerCase().includes(query),
+    );
+    if (fuzzy.length === 1) {
+      // Exact fuzzy match → auto-select
+      if (!fuzzy[0].available) {
+        await message.reply(
+          `⏳ Preset **${fuzzy[0].emoji} ${fuzzy[0].name}** is not yet available. ` +
+            `Add \`presets/${fuzzy[0].id}.wav\` to activate it.`,
+        );
+        return;
+      }
+      activePreset = fuzzy[0];
+      vadDetector?.setConfig({ activePresetId: fuzzy[0].id });
+      await message.reply(
+        `✅ Voice preset set to ${fuzzy[0].emoji} **${fuzzy[0].name}**!\n` +
+          `💡 Try \`!say Hello, this is ${fuzzy[0].name}!\``,
+      );
+      return;
+    }
+    if (fuzzy.length > 1) {
+      await message.reply(
+        `❓ Multiple presets match "${query}":\n` +
+          fuzzy.map((p) => `  ${p.emoji} \`${p.id}\` — ${p.name}`).join("\n"),
+      );
+      return;
+    }
+    await message.reply(
+      `❌ No preset found for "${query}". Try \`!voice list\` to see all presets.`,
+    );
+    return;
+  }
+
+  if (!preset.available) {
+    await message.reply(
+      `⏳ Preset **${preset.emoji} ${preset.name}** is not yet available. ` +
+        `Place \`presets/${preset.id}.wav\` in the presets folder to activate it.`,
+    );
+    return;
+  }
+
+  activePreset = preset;
+  vadDetector?.setConfig({ activePresetId: preset.id });
+  const categoryLabel = CATEGORY_META[preset.category]?.label ?? preset.category;
+  await message.reply({
+    embeds: [
+      {
+        color: 0x8b5cf6,
+        title: `✅ Voice Preset: ${preset.emoji} ${preset.name}`,
+        description: preset.description,
+        fields: [
+          { name: "Category", value: categoryLabel, inline: true },
+          { name: "Language", value: preset.language.toUpperCase(), inline: true },
+          {
+            name: "Try it",
+            value: `\`!say Hello, I'm ${preset.name}!\``,
+            inline: false,
+          },
+        ],
+        footer: { text: `Use !voice off to return to your own voice` },
+      },
+    ],
+  });
+}
+
+/** !say <text> — Clone and speak (uses active preset or recorded profile) */
 async function handleSay(message: any, text: string) {
   if (!text) {
     await message.reply("❌ Usage: `!say <text to speak>`");
@@ -422,9 +592,37 @@ async function handleSay(message: any, text: string) {
     return;
   }
 
+  // If a preset is active, use the preset's reference audio
+  if (activePreset) {
+    if (!activePreset.available) {
+      await message.reply(
+        `⏳ Preset **${activePreset.emoji} ${activePreset.name}** is not available. ` +
+          `Select another preset or use \`!voice off\` to use your recorded voice.`,
+      );
+      return;
+    }
+    await message.reply(`🗣️ ${activePreset.emoji} Speaking as **${activePreset.name}**...`);
+    try {
+      const audioPath = await generateClonedVoice(
+        `preset_${activePreset.id}`,
+        text,
+        activePreset.wavPath,
+        activePreset.language,
+      );
+      playClonedAudio(activeConnection, audioPath);
+      await message.reply(`🔊 ${activePreset.emoji} **${activePreset.name}** said it!`);
+    } catch (err) {
+      Sentry.captureException(err);
+      await message.reply(`❌ Voice cloning failed: \`${err}\``);
+    }
+    return;
+  }
+
+  // No preset — use the sender's recorded profile
   if (!profileStore.hasProfile(userId)) {
     await message.reply(
-      "❌ No voice profile found for you. Record one first with `!record`.",
+      "❌ No voice profile found for you. Record one with `!record` " +
+        "or select a preset with `!voice list`.",
     );
     return;
   }
