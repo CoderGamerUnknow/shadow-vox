@@ -12,7 +12,6 @@ import {
   AudioPlayerStatus,
   NoSubscriberBehavior,
 } from "@discordjs/voice";
-import { createReadStream } from "node:fs";
 
 /**
  * Play a cloned audio file back through an active voice connection.

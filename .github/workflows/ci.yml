@@ -1,0 +1,138 @@
+name: CI — Self-Healing Codebase
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Run self-heal daily at 3 AM UTC
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Run mode"
+        required: true
+        default: "diagnose"
+        type: choice
+        options:
+          - diagnose
+          - fix
+          - upgrade
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  self-heal:
+    name: ⚕️ Self-Heal Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🟢 Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: 🟢 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Install Node Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: 📦 Install Python Dependencies
+        run: |
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install -r python/requirements.txt --quiet
+
+      - name: ⚕️ Run Self-Heal Diagnostic
+        id: selfheal
+        run: bunx tsx src/self-heal.ts --ci
+        continue-on-error: true
+
+      - name: 📊 Check Report
+        id: check
+        run: |
+          REPORT=$(cat self-heal-report.json)
+          echo "### ⚕️ Self-Heal Report" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          echo "$REPORT" | head -30 >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "report=$REPORT" >> $GITHUB_OUTPUT
+
+      - name: 📐 TypeScript Typecheck
+        id: typecheck
+        run: |
+          if bun tsc -b --noEmit 2>&1; then
+            echo "### ✅ TypeScript" >> $GITHUB_STEP_SUMMARY
+            echo "Compilation clean with 0 errors." >> $GITHUB_STEP_SUMMARY
+            echo "status=clean" >> $GITHUB_OUTPUT
+          else
+            echo "### ❌ TypeScript" >> $GITHUB_STEP_SUMMARY
+            echo "Compilation has errors." >> $GITHUB_STEP_SUMMARY
+            echo "status=dirty" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 🧪 Run Tests
+        id: tests
+        run: |
+          if bun test 2>&1; then
+            echo "### ✅ Tests" >> $GITHUB_STEP_SUMMARY
+            echo "All tests passing." >> $GITHUB_STEP_SUMMARY
+            echo "status=pass" >> $GITHUB_OUTPUT
+          else
+            echo "### ❌ Tests" >> $GITHUB_STEP_SUMMARY
+            echo "Some tests failing." >> $GITHUB_STEP_SUMMARY
+            echo "status=fail" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 🛠️ Apply Auto-Fixes (if --fix or schedule)
+        if: >
+          github.event_name == 'schedule' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'fix') ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'upgrade')
+        run: |
+          MODE="${{ github.event.inputs.mode || 'fix' }}"
+          bunx tsx src/self-heal.ts --"$MODE"
+          echo "### 🛠️ Auto-Fixes Applied" >> $GITHUB_STEP_SUMMARY
+          echo "Mode: $MODE" >> $GITHUB_STEP_SUMMARY
+
+      - name: 📤 Upload Report Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-heal-report
+          path: self-heal-report.json
+
+  quality-gate:
+    name: 🚦 Quality Gate
+    needs: self-heal
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: 📦 Install
+        run: bun install --frozen-lockfile
+
+      - name: 📐 TypeScript Check
+        run: bun tsc -b --noEmit
+
+      - name: 🧪 Test Check
+        run: bun test
+
+      - name: ✅ Gate Passed
+        run: echo "### ✅ Quality Gate Passed" >> $GITHUB_STEP_SUMMARY

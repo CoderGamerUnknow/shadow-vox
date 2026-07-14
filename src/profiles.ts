@@ -6,8 +6,8 @@
  * that is used by the XTTS-v2 engine for voice cloning.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { resolve } from "node:path";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 

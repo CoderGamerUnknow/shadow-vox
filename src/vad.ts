@@ -17,7 +17,7 @@ import { profileStore, type VoiceProfile } from "./profiles.js";
 import { recordUserVoice } from "./recorder.js";
 import { generateClonedVoice } from "./cloner.js";
 import { playClonedAudio } from "./player.js";
-import { type VoicePreset, findPreset } from "./presets.js";
+import { findPreset } from "./presets.js";
 
 // ── Configuration ─────────────────────────────────────────────────────────
 

@@ -29,7 +29,7 @@ import "dotenv/config";
 import { recordUserVoice } from "./recorder.js";
 import { generateClonedVoice, healthCheck } from "./cloner.js";
 import { playClonedAudio } from "./player.js";
-import { VoiceActivityDetector, type VadConfig } from "./vad.js";
+import { VoiceActivityDetector } from "./vad.js";
 import { profileStore, type VoiceProfile } from "./profiles.js";
 import {
   VOICE_PRESETS,

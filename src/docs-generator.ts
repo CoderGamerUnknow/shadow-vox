@@ -17,7 +17,7 @@ import {
   readdirSync,
   statSync,
 } from "node:fs";
-import { join, relative, resolve, basename, extname, sep } from "node:path";
+import { join, relative } from "node:path";
 
 // ── Scanning helpers ──────────────────────────────────────────────────────
 
