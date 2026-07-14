@@ -228,6 +228,7 @@ export function generateReadme(projectRoot?: string): { path: string; size: numb
 - [Project Structure](#-project-structure)
 - [Dependencies](#-dependencies)
 - [Python TTS Server](#-python-tts-server)
+- [Security](#-security)
 - [Environment Variables](#-environment-variables)
 - [Development](#-development)
 
@@ -538,6 +539,8 @@ ${Object.entries(pkg?.dependencies ?? {})
       "discord.js": "Discord bot framework",
       dotenv: "Environment variable loading",
       express: "Admin web server",
+      "express-rate-limit": "API rate limiting (60/min general, 10/min sensitive)",
+      helmet: "Security headers (CSP, HSTS, X-Frame-Options, etc.)",
       "prism-media": "Audio stream transcoding",
     };
     return `| \`${name}\` | \`${ver}\` | ${purposes[name] || "—"} |`;
@@ -582,6 +585,45 @@ ${envVars
     return `| \`${v.var}\` | ${required} | ${v.comment || "—"} |`;
   })
   .join("\n")}
+
+---
+
+## 🛡️ Security
+
+ShadowVox has been hardened with **15 security layers** covering shell injection, path traversal, rate limiting, XSS, CSRF, and more.
+
+### Hardening Layers
+
+| # | Layer | Severity | File(s) |
+|---|---|---|---|
+| 1 | **Shell injection prevention** — FFmpeg conversion uses \`spawn\` with array arguments instead of \`exec\` with string interpolation | 🔴 Critical | \`src/recorder.ts\` |
+| 2 | **Path traversal prevention (Python)** — User IDs are sanitized with regex before filesystem operations; custom \`speaker_wav_path\` is validated to stay within the project directory | 🔴 Critical | \`python/tts_server.py\` |
+| 3 | **Path traversal prevention (TypeScript)** — Speaker WAV paths are resolved to absolute paths and checked to ensure they start with the project root | 🟠 High | \`src/cloner.ts\` |
+| 4 | **Rate limiting** — All API routes are limited to 60 requests/minute; sensitive endpoints (\`/api/speak\`, \`/api/record\`) are limited to 10 requests/minute | 🟠 High | \`src/admin-server.ts\` |
+| 5 | **Security headers (Helmet)** — Content Security Policy, X-Frame-Options, HSTS, X-Content-Type-Options, and other HTTP security headers are set on all responses | 🟠 High | \`src/admin-server.ts\` |
+| 6 | **Content Security Policy** — Script, style, font, and connection sources are explicitly restricted to allowed origins only | 🟠 High | \`src/admin-server.ts\` |
+| 7 | **Error message sanitization** — Stack traces and internal error details are never leaked to Discord users; errors are truncated to 200 characters and stripped of newlines | 🟠 High | \`src/index.ts\` |
+| 8 | **Input validation** — Text input is limited to 500 characters, control characters are stripped, and all user-provided text is validated before processing | 🟡 Medium | \`src/admin-server.ts\`, \`src/index.ts\` |
+| 9 | **XSS prevention** — All user-facing data in the dashboard is escaped using DOM-based \`escapeHtml()\` helper (emoji, IDs, names, categories) | 🟡 Medium | \`dashboard/app.js\` |
+| 10 | **Timing-safe API key comparison** — \`crypto.timingSafeEqual\` is used for API key verification instead of standard string comparison, preventing timing attacks | 🟡 Medium | \`src/admin-server.ts\` |
+| 11 | **API key not in URL** — Dashboard prompts for credentials via sessionStorage instead of reading from URL parameters, avoiding leakage through browser history and referrer headers | 🟡 Medium | \`dashboard/app.js\` |
+| 12 | **Body size limit** — Request body parsing is limited to 100 KB (down from 1 MB), preventing large-payload attacks | 🟡 Medium | \`src/admin-server.ts\` |
+| 13 | **Removed deprecated Sentry integration** — Outdated \`nodeContextIntegration()\` API call removed, replaced with Sentry v8 default integrations | ℹ️ Low | \`src/instrument.ts\` |
+| 14 | **VAD async handling** — \`onSpeakingStart\` now properly awaits and catches errors from \`recordUserVoice\` with structured try/catch instead of promise chains | ℹ️ Low | \`src/vad.ts\` |
+| 15 | **Empty catch block removed** — Removed a dead NOOP try/catch in the auto-profile section that was silently swallowing errors | ℹ️ Low | \`src/vad.ts\` |
+
+### Security Best Practices
+
+- **Environment variables** — All secrets are managed through \`.env\` (gitignored). Never commit \`.env\` to version control.
+- **Principle of least privilege** — The Discord bot token only requires minimal permissions (connect, speak, read messages). No admin server permissions are needed.
+- **Input sanitization** — All user-provided text is sanitized (control chars removed, length-limited) before reaching the TTS engine or being stored.
+- **Rate limiting** — API abuse is mitigated with multi-tier rate limiting. The admin panel is local-only by default.
+- **Dependency auditing** — Run \`npm audit\` or \`bun audit\` regularly to check for known vulnerabilities in dependencies.
+- **Python server isolation** — The TTS server binds only to \`127.0.0.1\` (localhost), not exposed to the network.
+
+### Reporting Vulnerabilities
+
+If you discover a security vulnerability, please open an issue on GitHub or contact the maintainers directly. Do not disclose security issues in public Discord channels.
 
 ---
 

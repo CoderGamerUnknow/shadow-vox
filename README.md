@@ -8,7 +8,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.5-3178c6" />
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green" />
-  <img alt="Lines" src="https://img.shields.io/badge/source-3,176_lines-22d3ee" />
+  <img alt="Lines" src="https://img.shields.io/badge/source-3,218_lines-22d3ee" />
 </p>
 
 ---
@@ -24,6 +24,7 @@
 - [Project Structure](#-project-structure)
 - [Dependencies](#-dependencies)
 - [Python TTS Server](#-python-tts-server)
+- [Security](#-security)
 - [Environment Variables](#-environment-variables)
 - [Development](#-development)
 
@@ -293,75 +294,76 @@ The Control Center (`localhost:3000`) lets you:
 ## 📁 Project Structure
 
 ```
-📄 LICENSE
-📁 python
-  📄 python/requirements.txt
-  📄 python/tts_server.py
-  📄 python/generate_presets.py
-📄 package.json
-📄 tsconfig.json
 📄 .env.example
-📁 src
-  📄 src/index.ts
-  📄 src/recorder.ts
-  📄 src/cloner.ts
-  📄 src/player.ts
-  📄 src/profiles.ts
-  📄 src/vad.ts
-  📄 src/admin-server.ts
-  📄 src/docs-generator.ts
-  📄 src/instrument.ts
-  📄 src/presets.ts
-📁 convex
+📄 LICENSE
+📄 README.md
 📄 bun.lock
-📄 tsconfig.tsbuildinfo
+📁 convex
 📁 dashboard
+  📄 dashboard/app.js
   📄 dashboard/index.html
   📄 dashboard/style.css
-  📄 dashboard/app.js
+📄 package.json
 📁 presets
-  📄 presets/yoda.wav
-  📄 presets/morgan-freeman.wav
+  📄 presets/arnold-schwarzenegger.wav
+  📄 presets/barack-obama.wav
+  📄 presets/beyonce.wav
+  📄 presets/bill-gates.wav
+  📄 presets/cate-blanchett.wav
+  📄 presets/christopher-walken.wav
+  📄 presets/dave-chappelle.wav
   📄 presets/david-attenborough.wav
-  📄 presets/james-earl-jones.wav
+  📄 presets/drake.wav
+  📄 presets/eddie-murphy.wav
+  📄 presets/elmo.wav
+  📄 presets/elon-musk.wav
+  📄 presets/elvis-presley.wav
   📄 presets/fran-drescher.wav
   📄 presets/gilbert-gottfried.wav
-  📄 presets/christopher-walken.wav
-  📄 presets/william-shatner.wav
-  📄 presets/arnold-schwarzenegger.wav
-  📄 presets/scarlett-johansson.wav
-  📄 presets/samuel-l-jackson.wav
-  📄 presets/tom-hanks.wav
-  📄 presets/meryl-streep.wav
-  📄 presets/keanu-reeves.wav
-  📄 presets/robert-downey-jr.wav
-  📄 presets/leonardo-dicaprio.wav
-  📄 presets/cate-blanchett.wav
-  📄 presets/ryan-reynolds.wav
-  📄 presets/zendaya.wav
-  📄 presets/eddie-murphy.wav
-  📄 presets/robin-williams.wav
-  📄 presets/jim-carrey.wav
-  📄 presets/ricky-gervais.wav
-  📄 presets/dave-chappelle.wav
-  📄 presets/kathy-burke.wav
-  📄 presets/john-cleese.wav
-  📄 presets/mickey-mouse.wav
-  📄 presets/spongebob.wav
-  📄 presets/homer-simpson.wav
-  📄 presets/stewie-griffin.wav
-  📄 presets/shrek.wav
-  📄 presets/elmo.wav
-  📄 presets/steve-jobs.wav
-  📄 presets/elon-musk.wav
-  📄 presets/bill-gates.wav
-  📄 presets/taylor-swift.wav
-  📄 presets/beyonce.wav
-  📄 presets/drake.wav
-  📄 presets/elvis-presley.wav
-  📄 presets/barack-obama.wav
-  📄 presets/winston-churchill.wav
   📄 presets/gollum.wav
+  📄 presets/homer-simpson.wav
+  📄 presets/james-earl-jones.wav
+  📄 presets/jim-carrey.wav
+  📄 presets/john-cleese.wav
+  📄 presets/kathy-burke.wav
+  📄 presets/keanu-reeves.wav
+  📄 presets/leonardo-dicaprio.wav
+  📄 presets/meryl-streep.wav
+  📄 presets/mickey-mouse.wav
+  📄 presets/morgan-freeman.wav
+  📄 presets/ricky-gervais.wav
+  📄 presets/robert-downey-jr.wav
+  📄 presets/robin-williams.wav
+  📄 presets/ryan-reynolds.wav
+  📄 presets/samuel-l-jackson.wav
+  📄 presets/scarlett-johansson.wav
+  📄 presets/shrek.wav
+  📄 presets/spongebob.wav
+  📄 presets/steve-jobs.wav
+  📄 presets/stewie-griffin.wav
+  📄 presets/taylor-swift.wav
+  📄 presets/tom-hanks.wav
+  📄 presets/william-shatner.wav
+  📄 presets/winston-churchill.wav
+  📄 presets/yoda.wav
+  📄 presets/zendaya.wav
+📁 python
+  📄 python/generate_presets.py
+  📄 python/requirements.txt
+  📄 python/tts_server.py
+📁 src
+  📄 src/admin-server.ts
+  📄 src/cloner.ts
+  📄 src/docs-generator.ts
+  📄 src/index.ts
+  📄 src/instrument.ts
+  📄 src/player.ts
+  📄 src/presets.ts
+  📄 src/profiles.ts
+  📄 src/recorder.ts
+  📄 src/vad.ts
+📄 tsconfig.json
+📄 tsconfig.tsbuildinfo
 ```
 
 ---
@@ -380,8 +382,8 @@ The Control Center (`localhost:3000`) lets you:
 | `discord.js` | `^14.15.3` | Discord bot framework |
 | `dotenv` | `^16.4.5` | Environment variable loading |
 | `express` | `^4.19.2` | Admin web server |
-| `express-rate-limit` | `^7.4.1` | — |
-| `helmet` | `^8.0.0` | — |
+| `express-rate-limit` | `^7.4.1` | API rate limiting (60/min general, 10/min sensitive) |
+| `helmet` | `^8.0.0` | Security headers (CSP, HSTS, X-Frame-Options, etc.) |
 | `prism-media` | `^1.3.5` | Audio stream transcoding |
 
 ### Python (8 packages)
@@ -432,6 +434,45 @@ python tts_server.py
 | `ADMIN_API_KEY` | ❌ No | Optional API key for securing admin endpoints |
 | `SENTRY_DSN` | ❌ No | SENTRY_TRACES_SAMPLE_RATE controls performance tracing (0.0-1.0, defaults to 0.1) |
 | `SENTRY_TRACES_SAMPLE_RATE` | ❌ No | — |
+
+---
+
+## 🛡️ Security
+
+ShadowVox has been hardened with **15 security layers** covering shell injection, path traversal, rate limiting, XSS, CSRF, and more.
+
+### Hardening Layers
+
+| # | Layer | Severity | File(s) |
+|---|---|---|---|
+| 1 | **Shell injection prevention** — FFmpeg conversion uses `spawn` with array arguments instead of `exec` with string interpolation | 🔴 Critical | `src/recorder.ts` |
+| 2 | **Path traversal prevention (Python)** — User IDs are sanitized with regex before filesystem operations; custom `speaker_wav_path` is validated to stay within the project directory | 🔴 Critical | `python/tts_server.py` |
+| 3 | **Path traversal prevention (TypeScript)** — Speaker WAV paths are resolved to absolute paths and checked to ensure they start with the project root | 🟠 High | `src/cloner.ts` |
+| 4 | **Rate limiting** — All API routes are limited to 60 requests/minute; sensitive endpoints (`/api/speak`, `/api/record`) are limited to 10 requests/minute | 🟠 High | `src/admin-server.ts` |
+| 5 | **Security headers (Helmet)** — Content Security Policy, X-Frame-Options, HSTS, X-Content-Type-Options, and other HTTP security headers are set on all responses | 🟠 High | `src/admin-server.ts` |
+| 6 | **Content Security Policy** — Script, style, font, and connection sources are explicitly restricted to allowed origins only | 🟠 High | `src/admin-server.ts` |
+| 7 | **Error message sanitization** — Stack traces and internal error details are never leaked to Discord users; errors are truncated to 200 characters and stripped of newlines | 🟠 High | `src/index.ts` |
+| 8 | **Input validation** — Text input is limited to 500 characters, control characters are stripped, and all user-provided text is validated before processing | 🟡 Medium | `src/admin-server.ts`, `src/index.ts` |
+| 9 | **XSS prevention** — All user-facing data in the dashboard is escaped using DOM-based `escapeHtml()` helper (emoji, IDs, names, categories) | 🟡 Medium | `dashboard/app.js` |
+| 10 | **Timing-safe API key comparison** — `crypto.timingSafeEqual` is used for API key verification instead of standard string comparison, preventing timing attacks | 🟡 Medium | `src/admin-server.ts` |
+| 11 | **API key not in URL** — Dashboard prompts for credentials via sessionStorage instead of reading from URL parameters, avoiding leakage through browser history and referrer headers | 🟡 Medium | `dashboard/app.js` |
+| 12 | **Body size limit** — Request body parsing is limited to 100 KB (down from 1 MB), preventing large-payload attacks | 🟡 Medium | `src/admin-server.ts` |
+| 13 | **Removed deprecated Sentry integration** — Outdated `nodeContextIntegration()` API call removed, replaced with Sentry v8 default integrations | ℹ️ Low | `src/instrument.ts` |
+| 14 | **VAD async handling** — `onSpeakingStart` now properly awaits and catches errors from `recordUserVoice` with structured try/catch instead of promise chains | ℹ️ Low | `src/vad.ts` |
+| 15 | **Empty catch block removed** — Removed a dead NOOP try/catch in the auto-profile section that was silently swallowing errors | ℹ️ Low | `src/vad.ts` |
+
+### Security Best Practices
+
+- **Environment variables** — All secrets are managed through `.env` (gitignored). Never commit `.env` to version control.
+- **Principle of least privilege** — The Discord bot token only requires minimal permissions (connect, speak, read messages). No admin server permissions are needed.
+- **Input sanitization** — All user-provided text is sanitized (control chars removed, length-limited) before reaching the TTS engine or being stored.
+- **Rate limiting** — API abuse is mitigated with multi-tier rate limiting. The admin panel is local-only by default.
+- **Dependency auditing** — Run `npm audit` or `bun audit` regularly to check for known vulnerabilities in dependencies.
+- **Python server isolation** — The TTS server binds only to `127.0.0.1` (localhost), not exposed to the network.
+
+### Reporting Vulnerabilities
+
+If you discover a security vulnerability, please open an issue on GitHub or contact the maintainers directly. Do not disclose security issues in public Discord channels.
 
 ---
 
@@ -488,5 +529,5 @@ Discord Voice Channel
 <p align="center">
   <sub>Generated automatically by <strong>/generate-readme</strong> • ShadowVox v1.0.0</sub>
   <br />
-  <sub>🕐 <strong>Last updated:</strong> 2026-07-14 12:13:32 UTC</sub>
+  <sub>🕐 <strong>Last updated:</strong> 2026-07-14 12:16:24 UTC</sub>
 </p>
