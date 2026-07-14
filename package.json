@@ -25,7 +25,6 @@
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
-    "@types/wav": "^1.0.5",
     "tsx": "^4.16.2",
     "typescript": "^5.5.3"
   }
