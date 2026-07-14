@@ -210,12 +210,42 @@ function renderPresetGrid() {
     const isActive = selectedPresetId === p.id;
     const availClass = p.available ? '' : 'unavailable';
     const activeClass = isActive ? 'active' : '';
-    return '<div class="preset-chip ' + availClass + ' ' + activeClass + '" ' +
+    
+    let html = '<div class="preset-chip ' + availClass + ' ' + activeClass + '" ' +
       (p.available ? 'onclick="selectPreset(\'' + p.id + '\')"' : 'title="Place presets/' + p.id + '.wav to activate"') + '>' +
       '<span class="chip-emoji">' + p.emoji + '</span>' +
-      '<span class="chip-name">' + escapeHtml(p.name) + '</span>' +
-    '</div>';
+      '<span class="chip-name">' + escapeHtml(p.name) + '</span>';
+    
+    // Add play sample button (only for available presets)
+    if (p.available) {
+      html += '<button class="chip-play" onclick="event.stopPropagation();playPresetSample(\'' + p.id + '\')" title="Play sample of ' + escapeHtml(p.name) + '">▶</button>';
+    }
+    
+    html += '</div>';
+    return html;
   }).join('');
+}
+
+// ── Play Preset Sample ──
+async function playPresetSample(presetId) {
+  const btn = document.querySelector('.preset-chip.active .chip-play') || event?.target;
+  const originalText = btn?.textContent || '▶';
+  if (btn) btn.textContent = '⏳';
+  
+  try {
+    const res = await fetch('/api/play-preset/' + presetId, { method:'POST', headers: apiHeaders() });
+    const data = await res.json();
+    if (data.status === 'success') {
+      const preset = (state.presets?.list || []).find(p => p.id === presetId);
+      showToast('🔊 ' + (preset?.emoji || '') + ' Playing ' + (data.preset || presetId));
+    } else {
+      showToast('❌ ' + (data.error || 'Failed'), 'error');
+    }
+  } catch {
+    showToast('❌ Network error', 'error');
+  }
+  
+  if (btn) btn.textContent = originalText;
 }
 
 function renderActivePresetBadge() {

@@ -397,6 +397,33 @@ export function startAdminServer(port: number, state: BotState): void {
     res.json({ status: "success", file: profile.samplePath });
   });
 
+  /** POST /api/play-preset/:presetId — play a preset's reference audio sample */
+  app.post("/api/play-preset/:presetId", (req: Request, res: Response) => {
+    const { presetId } = req.params;
+
+    if (!state.activeConnection) {
+      res.status(400).json({ error: "Bot is not connected to a voice channel" });
+      return;
+    }
+
+    const preset = findPreset(presetId);
+    if (!preset) {
+      res.status(404).json({ error: `Preset '${presetId}' not found` });
+      return;
+    }
+
+    if (!preset.available) {
+      res.status(404).json({
+        error: `Preset '${preset.name}' is not available. Place presets/${presetId}.wav to activate.`,
+      });
+      return;
+    }
+
+    playClonedAudio(state.activeConnection, preset.wavPath);
+    addLog("success", `🔊 Playing ${preset.emoji} ${preset.name} reference audio`);
+    res.json({ status: "success", file: preset.wavPath, preset: preset.name });
+  });
+
   /** POST /api/regenerate-readme — trigger README.md generation */
   app.post("/api/regenerate-readme", async (_req: Request, res: Response) => {
     try {
