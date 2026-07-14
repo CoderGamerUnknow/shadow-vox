@@ -1,0 +1,427 @@
+// ── State ──
+let state = { bot: null, connection: null, vad: null, profiles: null, logs: [] };
+let apiKey = '';
+const urlParams = new URLSearchParams(window.location.search);
+apiKey = urlParams.get('key') || '';
+
+function apiHeaders() {
+  const h = { 'Content-Type': 'application/json' };
+  if (apiKey) h['x-api-key'] = apiKey;
+  return h;
+}
+
+// ── Toast ──
+function showToast(msg, type = 'success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + type + ' show';
+  clearTimeout(t._hide);
+  t._hide = setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// ── Waveform ──
+const canvas = document.getElementById('waveformCanvas');
+const ctx = canvas.getContext('2d');
+let waveformPhase = 0;
+
+function resizeCanvas() {
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * devicePixelRatio;
+  canvas.height = rect.height * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+function drawWaveform(active) {
+  const w = canvas.width / devicePixelRatio;
+  const h = canvas.height / devicePixelRatio;
+  ctx.clearRect(0, 0, w, h);
+
+  const gradient = ctx.createLinearGradient(0, 0, w, 0);
+  gradient.addColorStop(0, active ? 'rgba(139,92,246,0.35)' : 'rgba(84,90,106,0.15)');
+  gradient.addColorStop(0.5, active ? 'rgba(34,211,238,0.35)' : 'rgba(84,90,106,0.15)');
+  gradient.addColorStop(1, active ? 'rgba(139,92,246,0.35)' : 'rgba(84,90,106,0.15)');
+
+  ctx.strokeStyle = gradient;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+
+  const amp = active ? h * 0.35 : h * 0.05;
+  const bars = Math.floor(w / 5);
+
+  for (let i = 0; i <= bars; i++) {
+    const x = (i / bars) * w;
+    const y = active
+      ? h/2 + Math.sin(x * 0.045 + waveformPhase) * amp * (0.5 + 0.5 * Math.sin(x * 0.008))
+      : h/2 + Math.sin(x * 0.06 + waveformPhase) * amp;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  waveformPhase += 0.025;
+  requestAnimationFrame(() => drawWaveform(active));
+}
+drawWaveform(false);
+
+// ── Fetch Status ──
+async function fetchStatus() {
+  try {
+    const res = await fetch('/api/status', { headers: apiHeaders() });
+    if (!res.ok) throw new Error('API error: ' + res.status);
+    state = await res.json();
+    renderAll();
+  } catch (err) {
+    document.getElementById('statusBadge').className = 'status-badge offline';
+    document.getElementById('statusText').textContent = 'Offline';
+  }
+}
+
+// ── Render ──
+function renderAll() {
+  // Header badges
+  const badge = document.getElementById('statusBadge');
+  const text = document.getElementById('statusText');
+  if (state.bot?.online) {
+    badge.className = 'status-badge online';
+    text.textContent = state.bot.username + ' • Online';
+  } else {
+    badge.className = 'status-badge offline';
+    text.textContent = 'Offline';
+  }
+
+  // Connection status
+  const conn = state.connection;
+  const connected = conn?.connected;
+  const connEl = document.getElementById('connStatus');
+  connEl.innerHTML = connected
+    ? '<span class="pulse-dot online"></span> Connected'
+    : '<span class="pulse-dot idle"></span> Disconnected';
+  document.getElementById('connGuild').textContent = conn?.guildName || '—';
+  document.getElementById('connChannel').textContent = conn?.channelName || '—';
+  document.getElementById('connBot').textContent = state.bot?.username || '—';
+  document.getElementById('connGuilds').textContent = state.bot?.guilds ?? '0';
+
+  // Waveform
+  const waveformText = document.getElementById('waveformText');
+  if (connected) {
+    waveformText.textContent = '● Live • ' + (conn.channelName || 'Voice') + ' in ' + (conn.guildName || 'Server');
+    drawWaveform(true);
+  } else {
+    waveformText.textContent = '○ Standing by — not connected to any voice channel';
+    drawWaveform(false);
+  }
+
+  // Connection card glow
+  document.getElementById('connectionCard').style.borderColor = connected
+    ? 'rgba(74,222,128,0.3)'
+    : 'var(--border)';
+
+  // Profiles
+  renderProfiles();
+  renderSpeakDropdown();
+  renderLogs();
+}
+
+// ── Profiles ──
+function renderProfiles() {
+  const list = document.getElementById('profileList');
+  const count = document.getElementById('profileCount');
+  const profiles = state.profiles?.list || [];
+
+  count.textContent = profiles.length;
+
+  if (!profiles.length) {
+    list.innerHTML = '<div class="empty-state">No profiles yet. Record a voice first!</div>';
+    return;
+  }
+
+  list.innerHTML = profiles.map(p => {
+    const initial = (p.username || p.userId || '?')[0].toUpperCase();
+    const time = new Date(p.recordedAt).toLocaleDateString();
+    const duration = p.sampleDurationMs ? (p.sampleDurationMs / 1000).toFixed(1) + 's' : '—';
+    const shortId = p.userId.slice(-6);
+    return '<div class="profile-item">' +
+      '<div class="profile-avatar">' + initial + '</div>' +
+      '<div class="profile-info">' +
+        '<div class="profile-name">' + escapeHtml(p.username || p.userId) + '</div>' +
+        '<div class="profile-meta">' +
+          '<span>🗓️ ' + time + '</span>' +
+          '<span>⏱️ ' + duration + '</span>' +
+          '<span>🆔 …' + shortId + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="profile-actions">' +
+        '<button class="btn btn-secondary btn-sm" onclick="playReference(\'' + p.userId + '\')" title="Play Reference">🔊 Ref</button>' +
+        '<button class="btn btn-danger btn-sm" onclick="deleteProfile(\'' + p.userId + '\')" title="Delete">🗑️</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderSpeakDropdown() {
+  const sel = document.getElementById('speakUser');
+  const btn = document.getElementById('speakBtn');
+  const profiles = state.profiles?.list || [];
+
+  if (profiles.length) {
+    const currentValue = sel.value;
+    sel.innerHTML = '<option value="">Select a voice profile...</option>' +
+      profiles.map(p => '<option value="' + p.userId + '"' + (p.userId === currentValue ? ' selected' : '') + '>' +
+        escapeHtml(p.username || p.userId) + '</option>').join('');
+    btn.disabled = false;
+  } else {
+    sel.innerHTML = '<option value="">— No profiles —</option>';
+    btn.disabled = true;
+  }
+}
+
+// ── Logs ──
+function renderLogs() {
+  const container = document.getElementById('logContainer');
+  const count = document.getElementById('logCount');
+  const logs = state.logs || [];
+
+  count.textContent = logs.length;
+
+  if (!logs.length) {
+    container.innerHTML = '<div class="empty-state">Waiting for activity...</div>';
+    return;
+  }
+
+  container.innerHTML = logs.slice().reverse().map(log => {
+    const icons = { info: 'ℹ️', success: '✅', warn: '⚠️', error: '❌' };
+    const time = new Date(log.timestamp).toLocaleTimeString();
+    return '<div class="log-entry">' +
+      '<span class="log-time">' + time + '</span>' +
+      '<span class="log-icon">' + (icons[log.level] || '•') + '</span>' +
+      '<span class="log-msg">' + escapeHtml(log.message) + '</span>' +
+    '</div>';
+  }).join('');
+
+  container.scrollTop = 0;
+}
+
+// ── Helpers ──
+function escapeHtml(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+// ── Play Reference Audio ──
+async function playReference(userId) {
+  try {
+    const res = await fetch('/api/play-reference/' + userId, { method:'POST', headers: apiHeaders() });
+    const data = await res.json();
+    if (data.status === 'success') showToast('🔊 Playing reference audio');
+    else showToast('❌ ' + (data.error || 'Failed'), 'error');
+  } catch { showToast('❌ Network error', 'error'); }
+}
+
+// ── Delete Profile ──
+async function deleteProfile(userId) {
+  if (!confirm('Delete this voice profile?')) return;
+  try {
+    const res = await fetch('/api/profiles/' + userId, { method:'DELETE', headers: apiHeaders() });
+    if (res.ok) { showToast('🗑️ Profile deleted'); fetchStatus(); }
+    else showToast('❌ Failed to delete', 'error');
+  } catch { showToast('❌ Network error', 'error'); }
+}
+
+// ── Join / Leave VC ──
+async function joinVC() {
+  const guildId = prompt('Enter Guild (Server) ID:');
+  if (!guildId) return;
+  const channelId = prompt('Enter Voice Channel ID:');
+  if (!channelId) return;
+  const btn = event?.target;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
+  try {
+    const res = await fetch('/api/join', { method:'POST', headers: apiHeaders(),
+      body: JSON.stringify({ guildId, channelId }) });
+    const data = await res.json();
+    if (data.status === 'success') showToast('🔊 Joined ' + data.channel);
+    else showToast('❌ ' + (data.error || 'Failed'), 'error');
+  } catch { showToast('❌ Network error', 'error'); }
+  if (btn) { btn.disabled = false; btn.innerHTML = '🔊 Join VC'; }
+  fetchStatus();
+}
+
+async function leaveVC() {
+  const btn = event?.target;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
+  try {
+    const res = await fetch('/api/leave', { method:'POST', headers: apiHeaders() });
+    const data = await res.json();
+    if (data.status === 'success') showToast('👋 Left ' + (data.left || 'channel'));
+    else showToast('❌ ' + (data.error || 'Failed'), 'error');
+  } catch { showToast('❌ Network error', 'error'); }
+  if (btn) { btn.disabled = false; btn.innerHTML = '⏹ Leave'; }
+  fetchStatus();
+}
+
+// ── Speak ──
+document.getElementById('speakBtn').addEventListener('click', async () => {
+  const userId = document.getElementById('speakUser').value;
+  const text = document.getElementById('speakText').value.trim();
+  const lang = document.getElementById('speakLang').value;
+
+  if (!userId || !text) {
+    showToast('Select a profile and enter text', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('speakBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Cloning...';
+
+  try {
+    const res = await fetch('/api/speak', {
+      method: 'POST',
+      headers: apiHeaders(),
+      body: JSON.stringify({ userId, text, language: lang }),
+    });
+    const data = await res.json();
+    if (data.status === 'success') {
+      showToast('🔊 Voice cloned and transmitted!');
+      document.getElementById('speakText').value = '';
+    } else {
+      showToast('❌ ' + (data.error || 'Failed'), 'error');
+    }
+  } catch {
+    showToast('❌ Network error', 'error');
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '<span class="btn-icon">📡</span> Transmit to VC';
+  fetchStatus();
+});
+
+// ── VAD Controls ──
+function updateVad() {
+  const config = {
+    enabled: document.getElementById('vadEnabled').checked,
+    autoClone: document.getElementById('vadClone').checked,
+    listenToAll: document.getElementById('vadAll').checked,
+    silenceDurationMs: parseInt(document.getElementById('silenceRange').value),
+    cooldownMs: parseInt(document.getElementById('cooldownRange').value) * 1000,
+  };
+  fetch('/api/vad', {
+    method: 'POST',
+    headers: apiHeaders(),
+    body: JSON.stringify(config),
+  }).catch(() => {});
+}
+
+function updateSilenceLabel() {
+  const val = parseInt(document.getElementById('silenceRange').value);
+  document.getElementById('silenceValue').textContent = (val / 1000).toFixed(1) + 's';
+}
+
+function updateCooldownLabel() {
+  const val = parseInt(document.getElementById('cooldownRange').value);
+  document.getElementById('cooldownValue').textContent = val + 's';
+}
+
+// ── Record Modal ──
+function openRecordModal() {
+  document.getElementById('recordModal').classList.add('open');
+}
+function closeRecordModal() {
+  document.getElementById('recordModal').classList.remove('open');
+}
+
+async function triggerRecording() {
+  const userId = document.getElementById('recordUserId').value.trim();
+  const username = document.getElementById('recordUsername').value.trim();
+  if (!userId) { showToast('User ID is required', 'error'); return; }
+
+  const btn = document.querySelector('#recordModal .btn-primary');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Recording...';
+
+  try {
+    const res = await fetch('/api/record', {
+      method: 'POST',
+      headers: apiHeaders(),
+      body: JSON.stringify({ userId, username: username || undefined }),
+    });
+    const data = await res.json();
+    if (data.status === 'success') {
+      showToast('✅ Voice profile saved!');
+      closeRecordModal();
+      document.getElementById('recordUserId').value = '';
+      document.getElementById('recordUsername').value = '';
+    } else {
+      showToast('❌ ' + (data.error || 'Failed'), 'error');
+    }
+  } catch {
+    showToast('❌ Network error', 'error');
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '🎙️ Start Recording';
+  fetchStatus();
+}
+
+// ── Regenerate README ──
+async function regenerateReadme() {
+  const btn = document.getElementById('readmeBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Generating...';
+
+  try {
+    const res = await fetch('/api/regenerate-readme', { method: 'POST', headers: apiHeaders() });
+    const data = await res.json();
+    if (data.status === 'success') {
+      showToast('📝 README.md generated (' + data.size + ')');
+    } else {
+      showToast('❌ ' + (data.error || 'Failed'), 'error');
+    }
+  } catch {
+    showToast('❌ Network error', 'error');
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '📝 Sync & Regenerate README.md';
+}
+
+// ── TTS Health ──
+async function checkTTSHealth() {
+  const btn = document.getElementById('healthBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Checking...';
+
+  try {
+    const res = await fetch('/api/health', { headers: apiHeaders() });
+    const data = await res.json();
+    const badge = document.getElementById('ttsBadge');
+    const dot = document.querySelector('.tts-dot');
+    const txt = document.getElementById('ttsText');
+    if (data.online) {
+      badge.className = 'tts-badge online';
+      dot.style.background = 'var(--accent-purple)';
+      txt.textContent = 'TTS Online';
+      showToast('✅ TTS server is running');
+    } else {
+      badge.className = 'tts-badge offline';
+      dot.style.background = 'var(--text-muted)';
+      txt.textContent = 'TTS Offline';
+      showToast('❌ TTS server unreachable', 'error');
+    }
+  } catch {
+    showToast('❌ Network error', 'error');
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '🩺 Check TTS Health';
+}
+
+// ── Refresh Profiles ──
+function refreshProfiles() {
+  fetchStatus();
+}
+
+// ── Polling ──
+fetchStatus();
+setInterval(fetchStatus, 3000);

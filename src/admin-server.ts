@@ -9,7 +9,10 @@
 import express from "express";
 import type { Request, Response } from "express";
 import cors from "cors";
+import { join, resolve, dirname } from "node:path";
 import type { Client } from "discord.js";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { VoiceConnection } from "@discordjs/voice";
 import { profileStore, type VoiceProfile } from "./profiles.js";
 import { VoiceActivityDetector, type VadConfig } from "./vad.js";
@@ -20,6 +23,11 @@ import {
   VoiceConnectionStatus,
   entersState,
 } from "@discordjs/voice";
+
+// ── Dashboard path ────────────────────────────────────────────────────────
+const _filename = fileURLToPath(import.meta.url);
+const _dirname = dirname(_filename);
+const DASHBOARD_DIR = resolve(_dirname, "..", "dashboard");
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -289,24 +297,65 @@ export function startAdminServer(port: number, state: BotState): void {
     }
   });
 
+  /** POST /api/play-reference/:userId — play a user's raw recorded reference audio */
+  app.post("/api/play-reference/:userId", (req: Request, res: Response) => {
+    const { userId } = req.params;
+
+    if (!state.activeConnection) {
+      res.status(400).json({ error: "Bot is not connected to a voice channel" });
+      return;
+    }
+
+    const profile = profileStore.getProfile(userId);
+    if (!profile) {
+      res.status(404).json({ error: `No profile found for user '${userId}'` });
+      return;
+    }
+
+    if (!existsSync(profile.samplePath)) {
+      res.status(404).json({ error: `Reference audio file not found: ${profile.samplePath}` });
+      return;
+    }
+
+    playClonedAudio(state.activeConnection, profile.samplePath);
+    addLog("success", `🔊 Playing reference audio for ${userId}`);
+    res.json({ status: "success", file: profile.samplePath });
+  });
+
+  /** POST /api/regenerate-readme — trigger README.md generation */
+  app.post("/api/regenerate-readme", async (_req: Request, res: Response) => {
+    try {
+      const { generateReadme } = await import("./docs-generator.js");
+      const result = generateReadme();
+      const sizeKb = (result.size / 1024).toFixed(1);
+      addLog("success", `📝 README.md regenerated (${sizeKb} KB)`);
+      res.json({ status: "success", path: result.path, size: sizeKb + " KB" });
+    } catch (err) {
+      addLog("error", `❌ README generation failed: ${err}`);
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
   /** GET /api/health — Python TTS server health */
   app.get("/api/health", async (_req: Request, res: Response) => {
     const ok = await healthCheck();
     res.json({ online: ok });
   });
 
-  // ── Serve Web Admin Panel ─────────────────────────────────────────────
+  // ── Serve Dashboard Static Files ──────────────────────────────────────
+
+  app.use("/static", express.static(DASHBOARD_DIR));
 
   app.get("/", (_req: Request, res: Response) => {
-    res.send(WEB_PANEL_HTML);
+    res.sendFile(join(DASHBOARD_DIR, "index.html"));
   });
 
   // ── Start ─────────────────────────────────────────────────────────────
 
   app.listen(port, () => {
-    console.log(`🌐 Admin panel: http://localhost:${port}`);
-    console.log(`📡 API:          http://localhost:${port}/api/status`);
-    addLog("success", `🌐 Admin panel started on port ${port}`);
+    console.log(`🌐 Control Center: http://localhost:${port}`);
+    console.log(`📡 API:             http://localhost:${port}/api/status`);
+    addLog("success", `🌐 Control Center started on port ${port}`);
   });
 }
 

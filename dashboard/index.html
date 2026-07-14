@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ShadowVox — Control Center</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="glass">
+      <div class="logo">
+        <div class="logo-icon">🎤</div>
+        <div>
+          <h1>ShadowVox</h1>
+          <span>Control Center</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="status-badge" id="statusBadge">
+          <span class="status-dot"></span>
+          <span id="statusText">Connecting...</span>
+        </div>
+        <div class="tts-badge" id="ttsBadge" title="Python TTS Server">
+          <span class="tts-dot"></span>
+          <span id="ttsText">TTS</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Top Row: Connection + Profiles + Admin Controls -->
+    <div class="grid grid-3">
+      <!-- Bot Connection Status -->
+      <div class="card glass glow-card" id="connectionCard">
+        <div class="card-header">
+          <span class="card-icon">🔌</span>
+          <span class="card-title">Bot Connection</span>
+        </div>
+        <div class="card-body">
+          <div class="stat-group">
+            <div class="stat-item">
+              <div class="stat-label">Status</div>
+              <div class="stat-value" id="connStatus">
+                <span class="pulse-dot idle"></span> Disconnected
+              </div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Guild</div>
+              <div class="stat-value mono" id="connGuild">—</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Channel</div>
+              <div class="stat-value mono" id="connChannel">—</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Bot Tag</div>
+              <div class="stat-value mono" id="connBot">—</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-label">Guilds</div>
+              <div class="stat-value mono" id="connGuilds">0</div>
+            </div>
+          </div>
+          <div class="action-row" style="margin-top:12px">
+            <button class="btn btn-primary btn-sm" onclick="joinVC()">🔊 Join VC</button>
+            <button class="btn btn-danger btn-sm" onclick="leaveVC()">⏹ Leave</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Voice Profiles -->
+      <div class="card glass glow-card" id="profilesCard">
+        <div class="card-header">
+          <span class="card-icon">👤</span>
+          <span class="card-title">Voice Profiles <span id="profileCount" class="count-badge">0</span></span>
+        </div>
+        <div class="card-body scrollable" id="profileList">
+          <div class="empty-state">No profiles yet. Record a voice first!</div>
+        </div>
+        <div class="card-footer action-row">
+          <button class="btn btn-primary btn-sm" onclick="openRecordModal()">🎙️ Record</button>
+          <button class="btn btn-ghost btn-sm" onclick="refreshProfiles()">⟳ Refresh</button>
+        </div>
+      </div>
+
+      <!-- Admin Controls -->
+      <div class="card glass glow-card" id="adminCard">
+        <div class="card-header">
+          <span class="card-icon">⚙️</span>
+          <span class="card-title">Admin Controls</span>
+        </div>
+        <div class="card-body">
+          <div class="btn-group-vertical">
+            <button class="btn btn-primary" onclick="regenerateReadme()" id="readmeBtn">
+              📝 Sync & Regenerate README.md
+            </button>
+            <button class="btn btn-secondary" onclick="checkTTSHealth()" id="healthBtn">
+              🩺 Check TTS Health
+            </button>
+          </div>
+          <div class="vad-section" style="margin-top:16px">
+            <div class="card-header" style="padding:0;margin-bottom:10px">
+              <span class="card-icon">🎤</span>
+              <span class="card-title" style="font-size:11px">VAD Settings</span>
+            </div>
+            <div class="vad-grid">
+              <label class="toggle-row">
+                <span>Listening</span>
+                <input type="checkbox" id="vadEnabled" checked onchange="updateVad()" />
+                <span class="toggle-slider"></span>
+              </label>
+              <label class="toggle-row">
+                <span>Auto-Clone</span>
+                <input type="checkbox" id="vadClone" checked onchange="updateVad()" />
+                <span class="toggle-slider"></span>
+              </label>
+              <label class="toggle-row">
+                <span>Listen All</span>
+                <input type="checkbox" id="vadAll" checked onchange="updateVad()" />
+                <span class="toggle-slider"></span>
+              </label>
+              <div class="slider-row">
+                <span>Silence</span>
+                <input type="range" id="silenceRange" min="200" max="4000" value="1200" oninput="updateSilenceLabel()" onchange="updateVad()" />
+                <span class="slider-value mono" id="silenceValue">1.2s</span>
+              </div>
+              <div class="slider-row">
+                <span>Cooldown</span>
+                <input type="range" id="cooldownRange" min="1" max="30" value="8" oninput="updateCooldownLabel()" onchange="updateVad()" />
+                <span class="slider-value mono" id="cooldownValue">8s</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Row: Live Mimic Console + System Logs -->
+    <div class="grid grid-2" style="margin-top:24px">
+      <!-- Live Mimic Console -->
+      <div class="card glass glow-card" id="mimicCard">
+        <div class="card-header">
+          <span class="card-icon">🗣️</span>
+          <span class="card-title">Live Mimic Console</span>
+        </div>
+        <div class="card-body">
+          <div class="speak-form">
+            <div class="form-row">
+              <div class="form-group" style="flex:1">
+                <label>Voice Profile</label>
+                <select id="speakUser" class="mono">
+                  <option value="">— No profiles —</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex:1">
+                <label>Language</label>
+                <select id="speakLang" class="mono">
+                  <option value="en">English</option>
+                  <option value="es">Spanish</option>
+                  <option value="fr">French</option>
+                  <option value="de">German</option>
+                  <option value="ja">Japanese</option>
+                  <option value="zh">Chinese</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Text to Transmit</label>
+              <textarea id="speakText" rows="3" placeholder="Type what you want the cloned voice to say..."></textarea>
+            </div>
+            <div class="action-row">
+              <button class="btn btn-primary" id="speakBtn" disabled>
+                <span class="btn-icon">📡</span> Transmit to VC
+              </button>
+              <button class="btn btn-ghost btn-sm" onclick="document.getElementById('speakText').value=''">
+                ✕ Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- System Logs -->
+      <div class="card glass glow-card" id="logsCard">
+        <div class="card-header">
+          <span class="card-icon">📋</span>
+          <span class="card-title">System Logs</span>
+          <span class="count-badge" id="logCount">0</span>
+        </div>
+        <div class="card-body log-container" id="logContainer">
+          <div class="empty-state">Waiting for activity...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Waveform Footer -->
+    <div class="waveform-bar glass">
+      <canvas id="waveformCanvas"></canvas>
+      <div class="waveform-text" id="waveformText">○ Standing by</div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <!-- Record Modal -->
+    <div class="modal-overlay" id="recordModal">
+      <div class="modal glass">
+        <div class="modal-header">
+          <h3>🎙️ Record Voice Profile</h3>
+          <button class="btn btn-ghost" onclick="closeRecordModal()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>User ID</label>
+            <input type="text" id="recordUserId" class="mono" placeholder="Discord user snowflake" />
+          </div>
+          <div class="form-group">
+            <label>Username (optional)</label>
+            <input type="text" id="recordUsername" placeholder="Display name" />
+          </div>
+          <button class="btn btn-primary" onclick="triggerRecording()">🎙️ Start Recording</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
