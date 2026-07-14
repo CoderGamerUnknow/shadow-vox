@@ -6,7 +6,14 @@
  * automatically clone and playback voices in real-time.
  */
 
-import { Client, GatewayIntentBits, Events, VoiceState } from "discord.js";
+import {
+  Client,
+  GatewayIntentBits,
+  Events,
+  VoiceState,
+  REST,
+  Routes,
+} from "discord.js";
 import {
   joinVoiceChannel,
   VoiceConnection,
@@ -72,6 +79,22 @@ client.once(Events.ClientReady, async (readyClient: Client<true>) => {
     `ℹ️  Invite the bot at:\n   https://discord.com/api/oauth2/authorize?client_id=${readyClient.user.id}&permissions=3148800&scope=bot`,
   );
   console.log(`📋 ${profileStore.count} voice profile(s) loaded from disk`);
+
+  // Register slash commands
+  try {
+    const rest = new REST({ version: "10" }).setToken(TOKEN!);
+    await rest.put(Routes.applicationCommands(readyClient.user.id), {
+      body: [
+        {
+          name: "generate-readme",
+          description: "Dynamically generate and update the project README.md",
+        },
+      ],
+    });
+    console.log("✅ Slash command /generate-readme registered");
+  } catch (err) {
+    console.warn("⚠️  Could not register slash command:", err);
+  }
 
   // Start admin web server
   if (ADMIN_ENABLED) {
@@ -223,6 +246,61 @@ client.on(Events.MessageCreate, async (message) => {
   } catch (err) {
     console.error(`❌ Command '${command}' error:`, err);
     await message.reply(`❌ An error occurred: \`${err}\``).catch(() => {});
+  }
+});
+
+// ── Slash Command Handler ────────────────────────────────────────────────
+
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  if (interaction.commandName === "generate-readme") {
+    // Defer the reply since generation may take a moment
+    await interaction.deferReply({ ephemeral: false });
+
+    try {
+      const { generateReadme } = await import("./docs-generator.js");
+      const result = generateReadme();
+      const sizeKb = (result.size / 1024).toFixed(1);
+
+      await interaction.editReply({
+        embeds: [
+          {
+            color: 0x8b5cf6,
+            title: "📝 README.md Generated",
+            description:
+              `File written to \`${result.path}\`\n` +
+              `**Size:** ${sizeKb} KB\n` +
+              `**Last Updated:** <t:${Math.floor(Date.now() / 1000)}:F>`,
+            fields: [
+              {
+                name: "📁 Project Tree",
+                value: "Source files, dependencies, and commands were scanned",
+                inline: true,
+              },
+              {
+                name: "💬 Commands",
+                value: "Prefix commands and REST API routes are documented",
+                inline: true,
+              },
+              {
+                name: "🔑 Env Vars",
+                value: "All environment variables are documented",
+                inline: true,
+              },
+            ],
+            footer: {
+              text: `ShadowVox • Generated at ${new Date().toISOString().slice(0, 19).replace("T", " ")} UTC`,
+            },
+          },
+        ],
+      });
+    } catch (err) {
+      console.error("❌ /generate-readme failed:", err);
+      await interaction.editReply({
+        content: `❌ Failed to generate README: \`${err}\``,
+      });
+    }
   }
 });
 
