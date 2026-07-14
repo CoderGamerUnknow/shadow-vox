@@ -229,6 +229,7 @@ export function generateReadme(projectRoot?: string): { path: string; size: numb
 - [Dependencies](#-dependencies)
 - [Python TTS Server](#-python-tts-server)
 - [Security](#-security)
+- [Production Server Cron Job](#-production-server-cron-job)
 - [Environment Variables](#-environment-variables)
 - [Development](#-development)
 
@@ -627,6 +628,7 @@ If you discover a security vulnerability, please open an issue on GitHub or cont
 
 ---
 
+${generateCronSection()}
 ## 🛠 Development
 
 ### Scripts
@@ -688,4 +690,92 @@ Discord Voice Channel
 
   console.log(`📝 README.md generated (${(size / 1024).toFixed(1)} KB) → ${outputPath}`);
   return { path: outputPath, size };
+}
+
+/**
+ * Generate the Production Cron Job documentation section.
+ */
+function generateCronSection(): string {
+  return `
+## 🕐 Production Server Cron Job
+
+The self-heal engine can run automatically on a schedule via a system-level cron job
+on your production server. This keeps the codebase healthy without manual intervention.
+
+### Scripts
+
+| Script | Purpose |
+|---|---|
+| \`cron/self-heal.sh\` | The actual cron job script — runs diagnostics, auto-fixes, and logging |
+| \`cron/install-cron.sh\` | Helper to install/remove/test the cron job in the user's crontab |
+
+### What the Cron Script Does
+
+| Step | Action |
+|---|---|
+| 1 🔒 | Acquire a lockfile at \`/tmp/shadowvox-selfheal.lock\` — prevents concurrent runs |
+| 2 📁 | Change to project root and run pre-flight checks (Bun, dependencies, disk space) |
+| 3 ⚕️ | Run the self-heal engine in \`--fix\` mode |
+| 4 📊 | Parse the CI report JSON and log error/warning/auto-fixed counts |
+| 5 📝 | Archive the report to \`logs/self-heal/report-*.json\` with timestamped filenames |
+| 6 🧹 | Trim logs older than 30 days and remove stale lockfiles |
+| 7 🔔 | Print a summary with a visual indicator if critical issues were found |
+
+### Install the Cron Job
+
+\`\`\`bash
+# Default schedule (daily at 3:00 AM server time)
+./cron/install-cron.sh
+
+# Custom schedule (e.g., every 6 hours)
+./cron/install-cron.sh --schedule "0 */6 * * *"
+
+# Check status
+./cron/install-cron.sh --status
+
+# Test run the script once (read-only diagnostic)
+./cron/install-cron.sh --test
+
+# Remove the cron job
+./cron/install-cron.sh --remove
+\`\`\`
+
+### Logs
+
+All output is stored in \`logs/self-heal/\`:
+
+\`\`\`
+logs/self-heal/
+├── self-heal-2026-07-14-030000.log   # Dated log files
+├── latest.log                         # Symlink to most recent log
+├── report-2026-07-14-030000.json      # JSON report archives
+├── latest-report.json                 # Symlink to most recent report
+└── crontab-stdout.log                 # Raw stdout/stderr from cron
+\`\`\`
+
+### Security Features
+
+- **Lockfile protection** — Prevents overlapping self-heal runs if the previous one is still running
+- **Stale lockfile detection** — Automatically removes orphaned lockfiles from crashed processes
+- **Log retention** — Old logs are automatically purged after 30 days
+- **Error containment** — Pre-flight checks catch missing dependencies before the engine runs
+- **Non-fatal failure mode** — The cron script exits with a non-zero code on failure, but does not crash or corrupt the codebase
+
+### Manual Trigger
+
+You can also run the cron script directly at any time:
+
+\`\`\`bash
+# Full fix mode
+./cron/self-heal.sh
+
+# Read-only diagnostic
+./cron/self-heal.sh --diagnose
+
+# Fix + code upgrades
+./cron/self-heal.sh --upgrade
+\`\`\`
+
+---
+`;
 }
