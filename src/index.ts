@@ -6,6 +6,10 @@
  * automatically clone and playback voices in real-time.
  */
 
+// ⚠️  Sentry instrumentation MUST be the first import
+import "./instrument.js";
+import * as Sentry from "@sentry/node";
+
 import {
   Client,
   GatewayIntentBits,
@@ -94,6 +98,7 @@ client.once(Events.ClientReady, async (readyClient: Client<true>) => {
     console.log("✅ Slash command /generate-readme registered");
   } catch (err) {
     console.warn("⚠️  Could not register slash command:", err);
+    Sentry.captureException(err);
   }
 
   // Start admin web server
@@ -146,8 +151,9 @@ async function autoJoinChannel(guildId: string, channelId: string) {
     console.log("✅ Connected to voice channel");
     activeConnection = connection;
     startVad(connection);
-  } catch {
+  } catch (err) {
     console.error("❌ Failed to connect to voice channel");
+    Sentry.captureException(err);
     connection.destroy();
   }
 }
@@ -177,6 +183,8 @@ function startVad(connection: VoiceConnection) {
       },
       onError: (userId, error) => {
         console.warn(`⚠️  VAD error for ${userId}: ${error}`);
+        Sentry.addBreadcrumb({ category: "vad", message: `VAD error for ${userId}: ${error}`, level: "error" });
+        Sentry.captureException(new Error(`VAD error for ${userId}: ${error}`));
       },
     },
   );
@@ -245,6 +253,8 @@ client.on(Events.MessageCreate, async (message) => {
     }
   } catch (err) {
     console.error(`❌ Command '${command}' error:`, err);
+    Sentry.addBreadcrumb({ category: "command", message: `Command '${command}' failed`, level: "error" });
+    Sentry.captureException(err);
     await message.reply(`❌ An error occurred: \`${err}\``).catch(() => {});
   }
 });
@@ -297,6 +307,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     } catch (err) {
       console.error("❌ /generate-readme failed:", err);
+      Sentry.captureException(err);
       await interaction.editReply({
         content: `❌ Failed to generate README: \`${err}\``,
       });
@@ -392,6 +403,7 @@ async function handleRecord(message: any) {
         `💡 Try \`!say <text>\` or enable auto-clone with \`!vad on\``,
     );
   } catch (err) {
+    Sentry.captureException(err);
     await message.reply(`❌ Recording failed: \`${err}\``);
   }
 }
@@ -423,6 +435,7 @@ async function handleSay(message: any, text: string) {
     playClonedAudio(activeConnection, audioPath);
     await message.reply(`🔊 Playing cloned voice!`);
   } catch (err) {
+    Sentry.captureException(err);
     await message.reply(`❌ Voice cloning failed: \`${err}\``);
   }
 }
@@ -653,5 +666,6 @@ async function handleVadCommand(message: any, args: string[]) {
 console.log("🚀 Starting ShadowVox ...");
 client.login(TOKEN).catch((err) => {
   console.error("❌ Failed to login:", err);
+  Sentry.captureException(err);
   process.exit(1);
 });

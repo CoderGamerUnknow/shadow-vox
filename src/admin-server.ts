@@ -9,6 +9,7 @@
 import express from "express";
 import type { Request, Response } from "express";
 import cors from "cors";
+import * as Sentry from "@sentry/node";
 import { join, resolve, dirname } from "node:path";
 import type { Client } from "discord.js";
 import { existsSync } from "node:fs";
@@ -341,6 +342,9 @@ export function startAdminServer(port: number, state: BotState): void {
     const ok = await healthCheck();
     res.json({ online: ok });
   });
+
+  // ── Sentry Error Handler (must be after all routes) ─────────────────
+  Sentry.setupExpressErrorHandler(app);
 
   // ── Serve Dashboard Static Files ──────────────────────────────────────
 
