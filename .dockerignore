@@ -1,0 +1,43 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Node
+node_modules
+dist
+tsconfig.tsbuildinfo
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv
+*.egg-info
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Runtime data (mounted as volumes)
+recordings
+output
+logs
+presets/*.wav
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Other
+coverage
+.turbo
+*.log

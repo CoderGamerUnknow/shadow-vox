@@ -1,0 +1,111 @@
+version: "3.9"
+
+# ===========================================================================
+# ShadowVox V2 — Production Docker Compose
+# ===========================================================================
+# Deploy the entire voice-cloning stack with one command:
+#
+#   docker compose up -d
+#
+# Services:
+#   - tts-engine:   Python FastAPI server (XTTS-v2 + Whisper STT)
+#   - bot:          Discord bot + Express admin panel
+#   - dashboard:    Nginx reverse proxy for the admin panel (optional)
+#
+# Volumes (for persistent data):
+#   - ./recordings  : Voice profile recordings
+#   - ./presets     : Voice preset .wav files
+#   - ./profiles.json : Voice profile metadata
+#   - ./logs        : Application logs
+# ===========================================================================
+
+services:
+  # ── Python TTS Engine ──────────────────────────────────────────────────
+  tts-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: python-tts
+    image: shadowvox-tts:latest
+    container_name: shadowvox-tts
+    restart: unless-stopped
+    
+    environment:
+      - TTS_PORT=8000
+      - TTS_DEVICE=cpu  # Change to "cuda" for GPU acceleration
+    
+    ports:
+      - "8000:8000"
+    
+    volumes:
+      - ./recordings:/app/recordings
+      - ./presets:/app/presets
+      - ./output:/app/output
+      - tts_cache:/root/.local/share/tts  # Cache the XTTS model
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s  # XTTS model takes ~60s to load
+    
+    command: >
+      python3 python/tts_server.py
+    
+    # GPU support (uncomment for CUDA acceleration)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ── Discord Bot + Admin Panel ──────────────────────────────────────────
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: bun-bot
+    image: shadowvox-bot:latest
+    container_name: shadowvox-bot
+    restart: unless-stopped
+    depends_on:
+      tts-engine:
+        condition: service_healthy
+    
+    environment:
+      - NODE_ENV=production
+      - PYTHON_API_URL=http://tts-engine:8000
+      - ADMIN_PORT=3000
+      # Copy .env.example to .env and set these:
+      # - DISCORD_BOT_TOKEN=your_token_here
+      # - ADMIN_API_KEY=your_key_here (optional)
+    
+    env_file:
+      - .env
+    
+    ports:
+      - "3000:3000"
+    
+    volumes:
+      - ./recordings:/app/recordings
+      - ./presets:/app/presets
+      - ./profiles.json:/app/profiles.json
+      - ./logs:/app/logs
+      - ./cron:/app/cron
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    
+    command: >
+      bun run src/index.ts
+
+volumes:
+  tts_cache:
+    driver: local
