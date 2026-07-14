@@ -58,6 +58,15 @@ export interface VadConfig {
    * Set to empty string to use recorded profiles.
    */
   activePresetId: string;
+  // ── V2 Features ────────────────────────────────────────────────────
+  /** V2.1: Consent check function. Return false to block recording. */
+  consentCheck?: (userId: string) => boolean;
+  /** V2.2: Audio effect to apply ('none' | 'walkie-talkie' | 'demon' | 'echo') */
+  effect?: string;
+  /** V2.3: Voice-to-Voice mode enabled */
+  v2vMode?: boolean;
+  /** V2.3: Target user ID for V2V cloning */
+  v2vTargetUserId?: string;
 }
 
 const DEFAULTS: VadConfig = {
@@ -70,6 +79,10 @@ const DEFAULTS: VadConfig = {
   autoClone: true,
   autoProfile: true,
   activePresetId: "",
+  // V2 defaults
+  effect: "none",
+  v2vMode: false,
+  v2vTargetUserId: "",
 };
 
 // ── Event Types ───────────────────────────────────────────────────────────
@@ -171,6 +184,11 @@ export class VoiceActivityDetector {
 
   private async onSpeakingStart(userId: string): Promise<void> {
     if (!this.config.enabled) return;
+
+    // V2.1: Consent check — block recording if consent not approved
+    if (this.config.consentCheck && !this.config.consentCheck(userId)) {
+      return;
+    }
 
     // If not listening to all, require an existing profile
     if (!this.config.listenToAll && !profileStore.hasProfile(userId)) {
@@ -285,6 +303,35 @@ export class VoiceActivityDetector {
 
         this.callbacks.onCloneStart?.(userId);
 
+        // V2.3: Voice-to-Voice mode — send audio to STT → clone pipeline
+        if (this.config.v2vMode && this.config.v2vTargetUserId) {
+          console.log(`🗣️  V2V mode: ${userId} → clone as ${this.config.v2vTargetUserId}`);
+          try {
+            const profile = profileStore.getProfile(this.config.v2vTargetUserId);
+            if (profile) {
+              const audioPath = await generateClonedVoice(
+                this.config.v2vTargetUserId,
+                `[v2v from ${userId}]`,
+              );
+              // The actual V2V flow uses the Python /voice-to-voice endpoint
+              // which handles STT → TTS in one call
+              const { sendVoiceToVoice } = await import("./cloner.js");
+              const result = await sendVoiceToVoice(
+                userId, // The recorded audio is from this user
+                this.config.v2vTargetUserId, // Cloned as this user
+              );
+              if (result) {
+                playClonedAudio(this.connection, result);
+              }
+              this.callbacks.onCloneComplete?.(userId, audioPath);
+            }
+          } catch (err) {
+            console.error(`❌ V2V failed:`, err);
+            this.callbacks.onError?.(userId, String(err));
+          }
+          return;
+        }
+
         // Determine if we should use a preset or the user's recorded profile
         const presetId = this.config.activePresetId;
         const preset = presetId ? findPreset(presetId) : undefined;
@@ -299,6 +346,7 @@ export class VoiceActivityDetector {
               this.config.cloneText,
               preset.wavPath,
               preset.language,
+              this.config.effect, // V2.2: Pass effect
             );
             this.callbacks.onCloneComplete?.(userId, audioPath);
             playClonedAudio(this.connection, audioPath);
@@ -310,7 +358,13 @@ export class VoiceActivityDetector {
         } else {
           console.log(`🗣️  VAD auto-cloning voice for ${userId} ...`);
           try {
-            const audioPath = await generateClonedVoice(userId, this.config.cloneText);
+            const audioPath = await generateClonedVoice(
+              userId,
+              this.config.cloneText,
+              undefined,
+              "en",
+              this.config.effect, // V2.2: Pass effect
+            );
             this.callbacks.onCloneComplete?.(userId, audioPath);
             playClonedAudio(this.connection, audioPath);
             console.log(`🔊 VAD played cloned voice for ${userId}`);

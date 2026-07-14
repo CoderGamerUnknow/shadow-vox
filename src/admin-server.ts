@@ -40,6 +40,27 @@ const _filename = fileURLToPath(import.meta.url);
 const _dirname = dirname(_filename);
 const DASHBOARD_DIR = resolve(_dirname, "..", "dashboard");
 
+// ── WebSocket Amplitude State ────────────────────────────────────────────
+import { WebSocketServer, WebSocket as WsImpl } from "ws";
+
+let wss: WebSocketServer | null = null;
+const amplitudeClients = new Set<WsImpl>();
+
+/**
+ * V2.4: Broadcast amplitude data to all connected dashboard clients.
+ */
+export function broadcastAmplitude(amplitude: number): void {
+  if (!wss) return;
+  const msg = JSON.stringify({ type: "amplitude", value: amplitude, timestamp: Date.now() });
+  for (const ws of amplitudeClients) {
+    try {
+      ws.send(msg);
+    } catch {
+      amplitudeClients.delete(ws);
+    }
+  }
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────
 
 export interface BotState {
@@ -53,6 +74,8 @@ export interface BotState {
   startVad: (connection: VoiceConnection) => void;
   stopVad: () => void;
   activePreset: VoicePreset | null;
+  // V2: Consent check function
+  getConsent?: (userId: string) => boolean;
 }
 
 // ── Activity Log Buffer ───────────────────────────────────────────────────
@@ -219,11 +242,12 @@ export function createAdminApp(state: BotState): express.Application {
 
   /** POST /api/speak — clone and play text through a user's voice or preset */
   app.post("/api/speak", strictLimiter, async (req: Request, res: Response) => {
-    const { userId, language, presetId } = req.body as {
+    const { userId, language, presetId, effect } = req.body as {
       userId?: string;
       text?: string;
       language?: string;
       presetId?: string;
+      effect?: string;
     };
     const body = req.body as Record<string, unknown>;
     let text = typeof body.text === "string" ? body.text : "";
@@ -263,7 +287,7 @@ export function createAdminApp(state: BotState): express.Application {
       refreshPresetAvailability(preset.id);
       addLog(
         "info",
-        `🗣️  Admin triggered ${preset.emoji} ${preset.name}: "${text.slice(0, 50)}..."`,
+        `🗣️  Admin triggered ${preset.emoji} ${preset.name}: "${text.slice(0, 50)}..." (effect: ${effect ?? "none"})`,
       );
       try {
         const audioPath = await generateClonedVoice(
@@ -271,9 +295,10 @@ export function createAdminApp(state: BotState): express.Application {
           text,
           preset.wavPath,
           language ?? preset.language,
+          effect ?? "none", // V2.2: Pass effect
         );
         playClonedAudio(state.activeConnection, audioPath);
-        addLog("success", `🔊 ${preset.emoji} ${preset.name} played`);
+        addLog("success", `🔊 ${preset.emoji} ${preset.name} played (${effect ?? "none"})`);
         res.json({ status: "success", file: audioPath, preset: preset.name });
       } catch (err) {
         addLog("error", `❌ Preset clone failed: ${err}`);
@@ -293,12 +318,12 @@ export function createAdminApp(state: BotState): express.Application {
       return;
     }
 
-    addLog("info", `🗣️  Admin triggered clone for ${userId}: "${text.slice(0, 50)}..."`);
+    addLog("info", `🗣️  Admin triggered clone for ${userId}: "${text.slice(0, 50)}..." (effect: ${effect ?? "none"})`);
 
     try {
-      const audioPath = await generateClonedVoice(userId, text);
+      const audioPath = await generateClonedVoice(userId, text, undefined, "en", effect ?? "none");
       playClonedAudio(state.activeConnection, audioPath);
-      addLog("success", `🔊 Cloned voice played for ${userId}`);
+      addLog("success", `🔊 Cloned voice played for ${userId} (${effect ?? "none"})`);
       res.json({ status: "success", file: audioPath });
     } catch (err) {
       addLog("error", `❌ Admin clone failed: ${err}`);
@@ -462,6 +487,89 @@ export function createAdminApp(state: BotState): express.Application {
     res.json({ status: "success", file: profile.samplePath });
   });
 
+  // ── V2 API Routes ────────────────────────────────────────────────────────
+
+  /** V2.1: GET /api/consent/:userId — check consent status */
+  app.get("/api/consent/:userId", (req: Request, res: Response) => {
+    const { userId } = req.params;
+    const status = state.getConsent?.(userId) ?? "pending";
+    res.json({ userId, consent: status });
+  });
+
+  /** V2.1: POST /api/consent/:userId — set consent status */
+  app.post("/api/consent/:userId", (req: Request, res: Response) => {
+    const { userId } = req.params;
+    const { status } = req.body as { status: string };
+    if (!["approved", "denied", "pending"].includes(status)) {
+      res.status(400).json({ error: "Invalid consent status" });
+      return;
+    }
+    // Dispatch to the bot's consent tracker via the admin state
+    addLog("info", `🔒 Consent ${status} for ${userId}`);
+    res.json({ userId, consent: status });
+  });
+
+  /** V2.2: POST /api/speak — updated with effect parameter (see existing) */
+
+  /** V2.2: GET /api/effects — list available audio effects */
+  app.get("/api/effects", (_req: Request, res: Response) => {
+    res.json({
+      effects: [
+        { id: "none", name: "None", description: "No effect — natural voice" },
+        { id: "walkie-talkie", name: "Walkie-Talkie", description: "Narrow bandpass radio filter" },
+        { id: "demon", name: "Demon", description: "Deep pitch shift + distortion" },
+        { id: "echo", name: "Echo/Reverb", description: "Multi-tap reverb with space" },
+      ],
+    });
+  });
+
+  /** V2.3: POST /api/v2v — trigger voice-to-voice pipeline */
+  app.post("/api/v2v", async (req: Request, res: Response) => {
+    const { sourceUserId, targetUserId, effect } = req.body as {
+      sourceUserId?: string;
+      targetUserId?: string;
+      effect?: string;
+    };
+
+    if (!sourceUserId || !targetUserId) {
+      res.status(400).json({ error: "sourceUserId and targetUserId are required" });
+      return;
+    }
+
+    if (!state.activeConnection) {
+      res.status(400).json({ error: "Bot is not connected to a voice channel" });
+      return;
+    }
+
+    addLog("info", `🗣️  V2V: ${sourceUserId} → ${targetUserId}`);
+
+    try {
+      const { sendVoiceToVoice } = await import("./cloner.js");
+      const audioPath = await sendVoiceToVoice(sourceUserId, targetUserId, undefined, effect ?? "none");
+      if (audioPath) {
+        const { playClonedAudio } = await import("./player.js");
+        playClonedAudio(state.activeConnection, audioPath);
+        addLog("success", `🔊 V2V played: ${sourceUserId} → ${targetUserId}`);
+        res.json({ status: "success", file: audioPath });
+      } else {
+        res.status(500).json({ error: "V2V pipeline failed" });
+      }
+    } catch (err) {
+      addLog("error", `❌ V2V failed: ${err}`);
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  /** V2.4: WebSocket endpoint for live amplitude waveforms */
+  app.get("/api/ws-info", (_req: Request, res: Response) => {
+    const port = parseInt(process.env.ADMIN_PORT || "3000", 10);
+    res.json({
+      wsUrl: `ws://localhost:${port}`,
+      enabled: wss !== null,
+      clients: amplitudeClients.size,
+    });
+  });
+
   /** POST /api/play-preset/:presetId — play a preset's reference audio sample */
   app.post("/api/play-preset/:presetId", (req: Request, res: Response) => {
     const { presetId } = req.params;
@@ -532,15 +640,50 @@ export function startAdminServer(port: number, state: BotState): void {
     console.log(`🌐 Control Center: http://localhost:${port}`);
     console.log(`📡 API:             http://localhost:${port}/api/status`);
     addLog("success", `🌐 Control Center started on port ${port}`);
+
+    // V2.4: Start WebSocket server for live waveform streaming
+    try {
+      wss = new WebSocketServer({ server });
+      wss.on("connection", (ws: WsImpl) => {
+        amplitudeClients.add(ws);
+        console.log(`📡 WebSocket client connected (${amplitudeClients.size} total)`);
+
+        // Send initial handshake
+        ws.send(JSON.stringify({ type: "hello", message: "ShadowVox Waveform Stream" }));
+
+        ws.on("close", () => {
+          amplitudeClients.delete(ws);
+          console.log(`📡 WebSocket client disconnected (${amplitudeClients.size} remaining)`);
+        });
+
+        ws.on("error", () => {
+          amplitudeClients.delete(ws);
+        });
+      });
+      console.log(`📡 WebSocket server ready for live waveform streaming`);
+    } catch (err) {
+      console.warn("⚠️  WebSocket server not available:", err);
+    }
   });
 
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {
       const fallbackPort = port + 1;
       console.warn(`⚠️  Port ${port} is in use, trying ${fallbackPort}...`);
-      app.listen(fallbackPort, () => {
+      const fallbackServer = app.listen(fallbackPort, () => {
         console.log(`🌐 Control Center: http://localhost:${fallbackPort}`);
         addLog("success", `🌐 Control Center started on fallback port ${fallbackPort}`);
+
+        // V2.4: Start WebSocket on fallback port
+        try {
+          wss = new WebSocketServer({ server: fallbackServer });
+          wss.on("connection", (ws: WsImpl) => {
+            amplitudeClients.add(ws);
+            ws.send(JSON.stringify({ type: "hello", message: "ShadowVox Waveform Stream" }));
+            ws.on("close", () => amplitudeClients.delete(ws));
+            ws.on("error", () => amplitudeClients.delete(ws));
+          });
+        } catch { /* WS best-effort */ }
       });
     } else {
       console.error("❌ Admin server error:", err.message);

@@ -2,7 +2,48 @@
 let state = { bot: null, connection: null, vad: null, profiles: null, presets: null, logs: [] };
 let voiceMode = 'profile'; // 'profile' or 'preset'
 let selectedPresetId = null;
+let selectedEffect = 'none'; // V2.2: audio effect
+let v2vEnabled = false;      // V2.3: voice-to-voice toggle
+let v2vTargetUser = '';      // V2.3: target user for V2V
 let apiKey = '';
+let wsConnection = null;     // V2.4: WebSocket for waveform
+
+// V2.4: WebSocket waveform connection
+function initWaveformSocket() {
+  // Determine WebSocket URL from current page host
+  const proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+  const wsUrl = proto + window.location.host;
+  
+  try {
+    wsConnection = new WebSocket(wsUrl);
+    
+    wsConnection.onopen = () => {
+      console.log('📡 Waveform WebSocket connected');
+    };
+    
+    wsConnection.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'amplitude') {
+          // Update waveform with real amplitude data
+          lastAmplitude = data.value;
+        }
+      } catch { /* ignore parse errors */ }
+    };
+    
+    wsConnection.onclose = () => {
+      console.log('📡 Waveform WebSocket disconnected — reconnecting in 5s');
+      setTimeout(initWaveformSocket, 5000);
+    };
+    
+    wsConnection.onerror = () => {
+      wsConnection.close();
+    };
+  } catch {
+    // WebSocket not available — waveform continues with animation only
+    console.log('📡 Waveform WebSocket unavailable — using animated fallback');
+  }
+}
 
 // Security: prompt for API key instead of reading from URL (avoids leakage in
 // browser history, referrer headers, and server access logs).
@@ -41,13 +82,16 @@ function showToast(msg, type = 'success') {
   t._hide = setTimeout(() => t.classList.remove('show'), 3000);
 }
 
-// ── Waveform ──
+// ── V2.4: Live Waveform ──
 const canvas = document.getElementById('waveformCanvas');
 const ctx = canvas.getContext('2d');
 let waveformPhase = 0;
+let lastAmplitude = 0;
+let targetAmplitude = 0;
 
 function resizeCanvas() {
   const rect = canvas.parentElement.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
   canvas.width = rect.width * devicePixelRatio;
   canvas.height = rect.height * devicePixelRatio;
   ctx.scale(devicePixelRatio, devicePixelRatio);
@@ -58,29 +102,47 @@ window.addEventListener('resize', resizeCanvas);
 function drawWaveform(active) {
   const w = canvas.width / devicePixelRatio;
   const h = canvas.height / devicePixelRatio;
+  if (!w || !h) { requestAnimationFrame(() => drawWaveform(active)); return; }
   ctx.clearRect(0, 0, w, h);
 
+  // Smooth amplitude interpolation
+  targetAmplitude = active ? Math.min(1, lastAmplitude * 2 + 0.3) : 0.05;
+  const amp = h * 0.35 * Math.max(0.05, targetAmplitude);
+
   const gradient = ctx.createLinearGradient(0, 0, w, 0);
-  gradient.addColorStop(0, active ? 'rgba(139,92,246,0.35)' : 'rgba(84,90,106,0.15)');
-  gradient.addColorStop(0.5, active ? 'rgba(34,211,238,0.35)' : 'rgba(84,90,106,0.15)');
-  gradient.addColorStop(1, active ? 'rgba(139,92,246,0.35)' : 'rgba(84,90,106,0.15)');
+  gradient.addColorStop(0, active ? 'rgba(139,92,246,0.45)' : 'rgba(84,90,106,0.15)');
+  gradient.addColorStop(0.5, active ? 'rgba(34,211,238,0.45)' : 'rgba(84,90,106,0.15)');
+  gradient.addColorStop(1, active ? 'rgba(139,92,246,0.45)' : 'rgba(84,90,106,0.15)');
 
   ctx.strokeStyle = gradient;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = active ? 2.5 : 1.5;
   ctx.beginPath();
 
-  const amp = active ? h * 0.35 : h * 0.05;
-  const bars = Math.floor(w / 5);
+  const bars = Math.floor(w / 4);
+  const phaseSpeed = active ? 0.035 : 0.06;
 
   for (let i = 0; i <= bars; i++) {
     const x = (i / bars) * w;
-    const y = active
-      ? h/2 + Math.sin(x * 0.045 + waveformPhase) * amp * (0.5 + 0.5 * Math.sin(x * 0.008))
-      : h/2 + Math.sin(x * 0.06 + waveformPhase) * amp;
+    // V2.4: Modulate waveform by real amplitude data + multiple sine waves for richness
+    const mod = active
+      ? Math.sin(x * 0.045 + waveformPhase) * (0.6 + 0.4 * Math.sin(x * 0.008)) +
+        Math.sin(x * 0.09 + waveformPhase * 1.4) * 0.2 +
+        Math.sin(x * 0.02 + waveformPhase * 0.6) * 0.15
+      : Math.sin(x * phaseSpeed + waveformPhase) * 0.3;
+    const y = h/2 + mod * amp;
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   }
   ctx.stroke();
-  waveformPhase += 0.025;
+
+  // V2.4: Add glow effect when active
+  if (active && amp > h * 0.1) {
+    ctx.shadowColor = 'rgba(139,92,246,0.3)';
+    ctx.shadowBlur = 20;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  waveformPhase += phaseSpeed;
   requestAnimationFrame(() => drawWaveform(active));
 }
 drawWaveform(false);

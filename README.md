@@ -8,7 +8,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.5-3178c6" />
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green" />
-  <img alt="Lines" src="https://img.shields.io/badge/source-4,344_lines-22d3ee" />
+  <img alt="Lines" src="https://img.shields.io/badge/source-5,030_lines-22d3ee" />
 </p>
 
 ---
@@ -26,6 +26,7 @@
 - [Python TTS Server](#-python-tts-server)
 - [Security](#-security)
 - [Production Server Cron Job](#-production-server-cron-job)
+- [V2 Roadmap](#-v2-roadmap)
 - [Environment Variables](#-environment-variables)
 - [Development](#-development)
 
@@ -111,11 +112,13 @@ bun run src/index.ts
 
 ## 💬 Prefix Commands
 
-All commands use the `!` prefix. 12 commands are registered.
+All commands use the `!` prefix. 15 commands are registered.
 
 | Command | Description |
 |---|---|
+| `!consent` | — |
 | `!deleteprofile` | Delete a user's voice profile |
+| `!effect` | — |
 | `!health` | Check if the Python TTS server is running |
 | `!join` | Join your current voice channel and start VAD |
 | `!leave` | Leave the voice channel and stop VAD |
@@ -125,6 +128,7 @@ All commands use the `!` prefix. 12 commands are registered.
 | `!record` | Record a voice profile for yourself or a mentioned user |
 | `!say` | Clone your voice and speak the provided text |
 | `!setclone` | Set the default text for VAD auto-cloning |
+| `!v2v` | — |
 | `!vad` | Manage Voice Activity Detection settings |
 | `!voice` | List and select from 42 voice presets (Morgan Freeman, Yoda, etc.) |
 
@@ -162,7 +166,7 @@ Open `http://localhost:3000` (configurable via `ADMIN_PORT`) to access:
 
 ### REST API
 
-11 endpoints are available under `/api/*` (secured with `ADMIN_API_KEY`):
+16 endpoints are available under `/api/*` (secured with `ADMIN_API_KEY`):
 
 | Method | Endpoint | Description |
 |---|---|---|
@@ -174,6 +178,11 @@ Open `http://localhost:3000` (configurable via `ADMIN_PORT`) to access:
 | `DELETE /api/profiles/:userId` | Delete a voice profile |
 | `POST /api/vad` | Update VAD configuration |
 | `POST /api/play-reference/:userId` | — |
+| `GET /api/consent/:userId` | — |
+| `POST /api/consent/:userId` | — |
+| `GET /api/effects` | — |
+| `POST /api/v2v` | — |
+| `GET /api/ws-info` | — |
 | `POST /api/play-preset/:presetId` | Play a preset's reference audio sample |
 | `POST /api/regenerate-readme` | — |
 | `GET /api/health` | Check Python TTS server health |
@@ -307,6 +316,10 @@ The Control Center (`localhost:3000`) lets you:
   📄 dashboard/app.js
   📄 dashboard/index.html
   📄 dashboard/style.css
+📁 logs
+  📁 logs/self-heal
+    📄 logs/self-heal/latest.log
+    📄 logs/self-heal/self-heal-2026-07-14-154856.log
 📄 package.json
 📁 presets
   📄 presets/arnold-schwarzenegger.wav
@@ -566,6 +579,84 @@ You can also run the cron script directly at any time:
 
 ---
 
+## 🚀 V2 Roadmap
+
+ShadowVox V2 adds four major features to the V1 foundation.
+
+### V2.1 🔒 Consent & Privacy Safeguard
+
+Before the bot records any user's voice, it requests explicit permission via ephemeral Discord DMs with **Approve** and **Deny** buttons. The VAD system checks consent state before capturing any audio.
+
+| Feature | Details |
+|---|---|
+| **Consent state** | Three states per user: `pending` → `approved` → `denied` |
+| **Ephemeral prompt** | Users receive a DM with [Approve] [Deny] buttons when the bot joins VC |
+| **VAD integration** | VAD checks `consentCheck` callback before recording |
+| **Commands** | `!consent status`, `!consent approve @user`, `!consent deny @user`, `!consent request` |
+| **API endpoints** | `GET /api/consent/:userId`, `POST /api/consent/:userId` |
+| **Auto-clear** | Consent resets when the user leaves and rejoins the voice channel |
+
+### V2.2 🎛️ Voicelab Effects
+
+Synthesized audio is piped through an FFmpeg-based effects engine before playback.
+
+| Effect | Description | Command |
+|---|---|---|
+| 🎤 **None** | Natural voice — no processing | `!effect none` |
+| 📻 **Walkie-Talkie** | Bandpass filter (300-3400Hz) + radio compression | `!effect walkie-talkie` |
+| 👹 **Demon** | Pitch shift down 8 semitones + distortion | `!effect demon` |
+| 🌊 **Echo/Reverb** | Multi-tap reverb with space and depth | `!effect echo` |
+
+| Integration | Details |
+|---|---|
+| **Python** | `apply_effect()` function in `tts_server.py` uses FFmpeg audio filters |
+| **TypeScript** | `effect` parameter added to `generateClonedVoice()` and `/api/speak` |
+| **VAD** | Auto-clone respects the active effect setting |
+| **Dashboard** | Effect selector dropdown in the Live Mimic Console |
+| **API** | `GET /api/effects` lists all available effects |
+
+### V2.3 🗣️ Voice-to-Voice Mode
+
+Speak naturally and the bot repeats what you said — in someone else's cloned voice. A complete STT → TTS pipeline running locally.
+
+| Step | Component |
+|---|---|
+| 1 🎙️ | User A speaks in the voice channel |
+| 2 📝 | Whisper-tiny (local) transcribes the speech to text |
+| 3 🎭 | XTTS-v2 clones User B's voice and speaks the transcribed text |
+| 4 🔊 | The cloned audio is played back in the voice channel |
+
+| Feature | Details |
+|---|---|
+| **STT model** | OpenAI Whisper-tiny (runs locally, no API key needed) |
+| **Pipeline** | `/voice-to-voice` Python endpoint handles STT → TTS in one call |
+| **Commands** | `!v2v on`, `!v2v off`, `!v2v target @user`, `!v2v status` |
+| **API** | `POST /api/v2v` triggers the pipeline |
+| **Fallback** | Falls back gracefully if Whisper is not installed |
+| **Effects** | V2V supports all Voicelab effects |
+
+### V2.4 📊 Live Audio Waveform
+
+Real-time audio amplitude visualization streamed to the Web Dashboard via WebSockets.
+
+| Feature | Details |
+|---|---|
+| **WebSocket** | Server starts on the same port as the admin panel |
+| **Amplitude data** | `broadcastAmplitude()` sends amplitude values to all connected clients |
+| **Canvas renderer** | Smooth animated waveform with real amplitude modulation |
+| **Glow effect** | Gradient glow appears when audio is active |
+| **Auto-reconnect** | Dashboard auto-reconnects on WebSocket disconnection |
+| **Fallback** | Animated sine wave shown when no amplitude data is available |
+
+### V2 Python Setup
+
+```bash
+# Install openai-whisper for V2.3 Voice-to-Voice (Python)
+pip install openai-whisper
+```
+
+---
+
 ## 🛠 Development
 
 ### Scripts
@@ -619,5 +710,5 @@ Discord Voice Channel
 <p align="center">
   <sub>Generated automatically by <strong>/generate-readme</strong> • ShadowVox v1.0.0</sub>
   <br />
-  <sub>🕐 <strong>Last updated:</strong> 2026-07-14 15:29:44 UTC</sub>
+  <sub>🕐 <strong>Last updated:</strong> 2026-07-14 16:00:36 UTC</sub>
 </p>

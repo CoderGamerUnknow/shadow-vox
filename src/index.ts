@@ -1,9 +1,11 @@
 /**
- * ShadowVox - Main Bot Entry Point
+ * ShadowVox V2 - Main Bot Entry Point
  *
- * A Discord bot that captures voices, manages multi-user voice profiles,
- * and provides a Voice Activity Detection (VAD) system that can
- * automatically clone and playback voices in real-time.
+ * V2 Upgrades:
+ *   • Consent & Privacy Safeguard — users must approve recording
+ *   • Voicelab Effects — Walkie-Talkie, Demon, Echo filters
+ *   • Voice-to-Voice Mode — whisper STT → clone pipeline
+ *   • Live Audio Waveform — WebSocket amplitude streaming
  */
 
 // ⚠️  Sentry instrumentation MUST be the first import
@@ -17,6 +19,9 @@ import {
   VoiceState,
   REST,
   Routes,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
 } from "discord.js";
 import {
   joinVoiceChannel,
@@ -27,7 +32,7 @@ import {
 import "dotenv/config";
 
 import { recordUserVoice } from "./recorder.js";
-import { generateClonedVoice, healthCheck } from "./cloner.js";
+import { generateClonedVoice, healthCheck, sendVoiceToVoice } from "./cloner.js";
 import { playClonedAudio } from "./player.js";
 import { VoiceActivityDetector } from "./vad.js";
 import { profileStore, type VoiceProfile } from "./profiles.js";
@@ -38,6 +43,24 @@ import {
   CATEGORY_META,
   type VoicePreset,
 } from "./presets.js";
+
+// ── Consent State ────────────────────────────────────────────────────────
+// Tracks which users have approved/denied voice recording.
+// Consent clears when the user leaves the voice channel.
+type ConsentStatus = "pending" | "approved" | "denied";
+const consentState = new Map<string, ConsentStatus>();
+
+function getConsent(userId: string): ConsentStatus {
+  return consentState.get(userId) ?? "pending";
+}
+
+function setConsent(userId: string, status: ConsentStatus) {
+  consentState.set(userId, status);
+}
+
+function clearConsent(userId: string) {
+  consentState.delete(userId);
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -180,10 +203,26 @@ function startVad(connection: VoiceConnection) {
     vadDetector.stop();
   }
 
+  // V2.1: Wire up consent check into VAD config
+  const consentCheck = (userId: string): boolean => {
+    const status = getConsent(userId);
+    if (status === "denied") {
+      console.log(`🔇 VAD: ${userId} denied consent — not recording`);
+      return false;
+    }
+    if (status === "pending") {
+      console.log(`⏳ VAD: ${userId} has not consented — skipping`);
+      // Auto-setting to pending — user will need to click approve
+      return false;
+    }
+    return true; // approved
+  };
+
   vadDetector = new VoiceActivityDetector(
     connection,
     {
       cloneText: defaultCloneText,
+      consentCheck, // V2.1: Pass consent check function
     },
     {
       onRecordingStart: (userId) => {
@@ -253,8 +292,18 @@ client.on(Events.MessageCreate, async (message) => {
       case "voice":
         await handleVoice(message, args, rest);
         break;
+      // ── V2 Commands ────────────────────────────────────────────
       case "vad":
         await handleVadCommand(message, args);
+        break;
+      case "effect":
+        await handleEffectCommand(message, args, rest);
+        break;
+      case "v2v":
+        await handleV2VCommand(message, args);
+        break;
+      case "consent":
+        await handleConsentCommand(message, args);
         break;
       case "ping":
         await message.reply("🏓 Pong! Bot is alive.");
@@ -280,9 +329,63 @@ client.on(Events.MessageCreate, async (message) => {
   }
 });
 
-// ── Slash Command Handler ────────────────────────────────────────────────
+// ── Slash Command & Button Handler ─────────────────────────────────────
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  // Handle button interactions (consent, V2V)
+  if (interaction.isButton()) {
+    const [action, userId] = interaction.customId.split(":");
+
+    if (action === "consent-approve") {
+      setConsent(userId, "approved");
+      await interaction.reply({
+        content: "✅ **Recording Approved** — Your voice may now be captured for cloning.",
+        ephemeral: true,
+      });
+      console.log(`✅ Consent granted by ${userId}`);
+      return;
+    }
+
+    if (action === "consent-deny") {
+      setConsent(userId, "denied");
+      await interaction.reply({
+        content: "🔇 **Recording Denied** — Your voice will never be captured. You can rejoin VC and click \"Approve\" to change this.",
+        ephemeral: true,
+      });
+      console.log(`🔇 Consent denied by ${userId}`);
+      return;
+    }
+
+    if (action === "v2v-start") {
+      // Voice-to-Voice: bot will listen and auto-transcribe
+      if (!activeConnection) {
+        await interaction.reply({ content: "❌ Bot is not in a voice channel.", ephemeral: true });
+        return;
+      }
+      if (vadDetector) {
+        vadDetector.setConfig({ v2vMode: true, v2vTargetUserId: userId });
+      }
+      await interaction.reply({
+        content: "🗣️ **Voice-to-Voice Mode ON** — Speak and I'll repeat in the target user's voice!",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (action === "v2v-stop") {
+      if (vadDetector) {
+        vadDetector.setConfig({ v2vMode: false, v2vTargetUserId: "" });
+      }
+      await interaction.reply({
+        content: "⏹️ **Voice-to-Voice Mode OFF**",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   if (interaction.commandName === "generate-readme") {
@@ -374,11 +477,82 @@ async function handleJoin(message: any) {
     await entersState(connection, VoiceConnectionStatus.Ready, 10_000);
     activeConnection = connection;
     startVad(connection);
+
+    // V2.1: Send consent request to everyone in the channel
     await message.reply(`✅ Joined **${voiceChannel.name}** — VAD is active`);
+    await requestConsent(message, connection);
   } catch {
     connection.destroy();
     activeConnection = null;
     await message.reply("❌ Failed to join voice channel");
+  }
+}
+
+/**
+ * V2.1: Send consent buttons to all members in the voice channel.
+ * Each user sees an ephemeral [Approve] [Deny] prompt.
+ */
+async function requestConsent(message: any, connection: VoiceConnection) {
+  const channel = message.member?.voice.channel;
+  if (!channel) return;
+
+  const members = channel.members.filter((m: any) => !m.user.bot);
+  if (members.size === 0) return;
+
+  const approveBtn = new ButtonBuilder()
+    .setCustomId(`consent-approve:${message.author.id}`)
+    .setLabel("✅ Approve Recording")
+    .setStyle(ButtonStyle.Success);
+
+  const denyBtn = new ButtonBuilder()
+    .setCustomId(`consent-deny:${message.author.id}`)
+    .setLabel("🚫 Deny")
+    .setStyle(ButtonStyle.Danger);
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(approveBtn, denyBtn);
+
+  const embed = {
+    color: 0x8b5cf6,
+    title: "🔒 Voice Recording Consent Required",
+    description:
+      "This bot can clone voices for entertainment purposes.\n" +
+      "**Your privacy matters.** By clicking Approve, you consent to having " +
+      "your voice captured, processed by a local AI model, and played back " +
+      "in the voice channel.\n\n" +
+      "Click **Deny** if you do not want your voice recorded. " +
+      "Your choice will be respected until you leave the channel.",
+    fields: [
+      {
+        name: "How it works",
+        value:
+          "1. You speak in VC → your Opus audio is captured\n" +
+          "2. The audio is decoded and sent to a local Python AI\n" +
+          "3. The AI clones your voice and speaks the text\n" +
+          "4. **No audio leaves your server** — everything runs locally",
+        inline: false,
+      },
+      {
+        name: "Data handling",
+        value:
+          "• Audio is processed in real-time and discarded after cloning\n" +
+          "• Voice profiles are stored locally as .wav files\n" +
+          "• You can delete your profile anytime with `!deleteprofile`\n" +
+          "• No data is sent to third-party services",
+        inline: false,
+      },
+    ],
+    footer: { text: "You can change your mind by leaving and rejoining VC" },
+  };
+
+  // Send ephemeral consent request to each member
+  for (const [, member] of members) {
+    try {
+      await member.send({ embeds: [embed], components: [row] }).catch(() => {
+        // Can't DM — skip
+      });
+    } catch {
+      // Silently skip users who can't be DMed
+    }
   }
 }
 
@@ -501,13 +675,12 @@ async function handleVoice(message: any, args: string[], rest: string) {
 
   // !voice off / none — clear preset, use recorded voice
   if (sub === "off" || sub === "none" || sub === "clear") {
-    activePreset = null;
-    vadDetector?.setConfig({ activePresetId: "" });
-    await message.reply("🎤 Voice preset cleared — you'll now use your recorded voice.");
-    return;
-  }
+    activePreset = null;  vadDetector?.setConfig({ activePresetId: "" });
+  await message.reply("🎤 Voice preset cleared — you'll now use your recorded voice.");
+  return;
+}
 
-  // !voice <name> — select a preset by ID or name
+  // !voice <name> — select a preset by ID or name — select a preset by ID or name
   const query = sub || rest;
   const preset = findPreset(query);
 
@@ -861,6 +1034,152 @@ async function handleVadCommand(message: any, args: string[]) {
 
   await message.reply(
     "❌ Unknown VAD subcommand. Try `!vad status` to see all options.",
+  );
+}
+
+// ── V2 Commands ──────────────────────────────────────────────────────────
+
+/** !effect — Set the audio effect for voice cloning */
+async function handleEffectCommand(message: any, args: string[], rest: string) {
+  const sub = args[1]?.toLowerCase();
+
+  if (!sub || sub === "list" || sub === "help") {
+    await message.reply({
+      embeds: [{
+        color: 0x8b5cf6,
+        title: "🎛️ Voicelab Effects",
+        description:
+          "Apply audio effects to make your cloned voice sound cooler.\n\n" +
+          "**Available effects:**\n" +
+          "📻 `walkie-talkie` — Narrow bandpass radio filter\n" +
+          "👹 `demon` — Deep pitch shift + distortion\n" +
+          "🌊 `echo` — Multi-tap reverb with space\n" +
+          "🎤 `none` — Natural, no effect (default)\n\n" +
+          "**Usage:** `!effect walkie-talkie`\n" +
+          "**Check:** `!effect current`",
+      }],
+    });
+    return;
+  }
+
+  if (sub === "current" || sub === "status") {
+    const current = (vadDetector?.getConfig().effect) || "none";
+    const names: Record<string, string> = {
+      none: "🎤 None (natural voice)",
+      "walkie-talkie": "📻 Walkie-Talkie",
+      demon: "👹 Demon",
+      echo: "🌊 Echo/Reverb",
+    };
+    await message.reply(`🎛️ Current effect: ${names[current] || current}`);
+    return;
+  }
+
+  const validEffects = ["none", "walkie-talkie", "demon", "echo"];
+  if (!validEffects.includes(sub)) {
+    await message.reply(`❌ Unknown effect "${sub}". Try \`!effect list\` to see options.`);
+    return;
+  }
+
+  vadDetector?.setConfig({ effect: sub });
+  const names: Record<string, string> = {
+    none: "🎤 None (natural voice)",
+    "walkie-talkie": "📻 Walkie-Talkie",
+    demon: "👹 Demon",
+    echo: "🌊 Echo/Reverb",
+  };
+  await message.reply(`✅ Effect set to: ${names[sub]}`);
+}
+
+/** !v2v — Voice-to-Voice mode control */
+async function handleV2VCommand(message: any, args: string[]) {
+  const sub = args[1]?.toLowerCase();
+
+  if (!sub || sub === "status") {
+    const config = vadDetector?.getConfig();
+    const isOn = config?.v2vMode ?? false;
+    const target = config?.v2vTargetUserId || "none";
+    await message.reply(
+      `🗣️ **Voice-to-Voice:** ${isOn ? "✅ ON" : "❌ OFF"}\n` +
+      `**Target voice:** ${target}\n\n` +
+      `Commands:\n` +
+      `  \`!v2v on\` — Enable V2V mode\n` +
+      `  \`!v2v off\` — Disable V2V mode\n` +
+      `  \`!v2v target @user\` — Set whose voice to clone into`,
+    );
+    return;
+  }
+
+  if (sub === "on") {
+    vadDetector?.setConfig({ v2vMode: true });
+    await message.reply("🗣️ **Voice-to-Voice ON** — Speak and I'll repeat in the target user's voice!");
+    return;
+  }
+
+  if (sub === "off") {
+    vadDetector?.setConfig({ v2vMode: false, v2vTargetUserId: "" });
+    await message.reply("⏹️ **Voice-to-Voice OFF**");
+    return;
+  }
+
+  if (sub === "target") {
+    const targetUser = message.mentions.users.first();
+    if (!targetUser) {
+      await message.reply("❌ Mention a user: `!v2v target @username`");
+      return;
+    }
+    vadDetector?.setConfig({ v2vTargetUserId: targetUser.id });
+    await message.reply(`🎯 V2V target set to **${targetUser.username}** — speech will be cloned into their voice.`);
+    return;
+  }
+
+  await message.reply("❌ Usage: `!v2v [on|off|target @user|status]`");
+}
+
+/** !consent — Check or manage voice recording consent */
+async function handleConsentCommand(message: any, args: string[]) {
+  const sub = args[1]?.toLowerCase();
+
+  if (!sub || sub === "status") {
+    const targetUser = message.mentions.users.first() || message.author;
+    const status = getConsent(targetUser.id);
+    const statusEmoji: Record<ConsentStatus, string> = {
+      approved: "✅ Approved",
+      denied: "🔇 Denied",
+      pending: "⏳ Pending",
+    };
+    await message.reply(
+      `🔒 **Consent for ${targetUser.username}:** ${statusEmoji[status]}`
+    );
+    return;
+  }
+
+  if (sub === "request") {
+    // Re-send consent request
+    if (!activeConnection) {
+      await message.reply("❌ Not connected to a voice channel.");
+      return;
+    }
+    await requestConsent(message, activeConnection);
+    return;
+  }
+
+  if (sub === "approve" || sub === "allow") {
+    const targetUser = message.mentions.users.first() || message.author;
+    setConsent(targetUser.id, "approved");
+    await message.reply(`✅ Consent approved for **${targetUser.username}**`);
+    return;
+  }
+
+  if (sub === "deny" || sub === "block") {
+    const targetUser = message.mentions.users.first() || message.author;
+    setConsent(targetUser.id, "denied");
+    await message.reply(`🔇 Consent denied for **${targetUser.username}**`);
+    return;
+  }
+
+  await message.reply(
+    "❌ Usage: `!consent [status|request|approve|deny] [@user]`\n" +
+    "When the bot joins VC, you'll receive an ephemeral Approve/Deny prompt.",
   );
 }
 
