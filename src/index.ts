@@ -26,6 +26,8 @@ import { profileStore, type VoiceProfile } from "./profiles.js";
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const TARGET_GUILD_ID = process.env.TARGET_GUILD_ID;
 const TARGET_VOICE_CHANNEL_ID = process.env.TARGET_VOICE_CHANNEL_ID;
+const ADMIN_PORT = parseInt(process.env.ADMIN_PORT || "3000", 10);
+const ADMIN_ENABLED = process.env.ADMIN_DISABLED !== "true";
 
 if (!TOKEN) {
   console.error("❌ DISCORD_BOT_TOKEN is not set in .env");
@@ -41,6 +43,18 @@ let vadDetector: VoiceActivityDetector | null = null;
 let defaultCloneText: string =
   "Hello, I am your voice clone. I can sound just like you!";
 
+function setActiveConnection(conn: VoiceConnection | null) {
+  activeConnection = conn;
+}
+
+function setVadDetector(vad: VoiceActivityDetector | null) {
+  vadDetector = vad;
+}
+
+function setDefaultCloneText(text: string) {
+  defaultCloneText = text;
+}
+
 // ── Client Setup ──────────────────────────────────────────────────────────
 
 const client = new Client({
@@ -52,12 +66,28 @@ const client = new Client({
   ],
 });
 
-client.once(Events.ClientReady, (readyClient) => {
+client.once(Events.ClientReady, async (readyClient: Client<true>) => {
   console.log(`✅ Logged in as ${readyClient.user.tag}`);
   console.log(
     `ℹ️  Invite the bot at:\n   https://discord.com/api/oauth2/authorize?client_id=${readyClient.user.id}&permissions=3148800&scope=bot`,
   );
   console.log(`📋 ${profileStore.count} voice profile(s) loaded from disk`);
+
+  // Start admin web server
+  if (ADMIN_ENABLED) {
+    const { startAdminServer } = await import("./admin-server.js");
+    startAdminServer(ADMIN_PORT, {
+      client: readyClient,
+      activeConnection,
+      setActiveConnection,
+      vadDetector,
+      setVadDetector,
+      defaultCloneText,
+      setDefaultCloneText,
+      startVad,
+      stopVad,
+    });
+  }
 
   // Auto-join the configured voice channel on startup
   if (TARGET_GUILD_ID && TARGET_VOICE_CHANNEL_ID) {
